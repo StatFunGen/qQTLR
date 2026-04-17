@@ -1,0 +1,10 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+^\.git
+^\.github
+^\.gitignore
+^pixi.toml
+^pixi.lock
+^\.pixi
+^.covrignore

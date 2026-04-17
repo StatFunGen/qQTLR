@@ -1,0 +1,12 @@
+src/*.o
+src/*.so
+src/*.dylib
+src/Makevars
+**/.ipynb_checkpoints
+.Rproj.user
+**/.DS_Store
+.Rhistory
+pecotmr.Rproj
+/pixi.lock
+/.pixi
+docs
