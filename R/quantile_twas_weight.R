@@ -82,7 +82,7 @@ qr_screen <- function(
     pvec[ip] <- pvalue
   }
 
-  pvec <- apply(quantile.pvalue, 1, pecotmr:::pval_cauchy)
+  pvec <- apply(quantile.pvalue, 1, pval_cauchy)
 
   if (screen_method == "fdr") {
     adjusted_pvalues <- p.adjust(pvec)
@@ -90,10 +90,10 @@ qr_screen <- function(
     method_quantile_names <- paste0("fdr_p_qr_", tau.list)
     quantile_adjusted_pvalues <- apply(quantile.pvalue, 2, p.adjust)
   } else if (screen_method == "qvalue") {
-    adjusted_pvalues <- pecotmr:::compute_qvalues(pvec)
+    adjusted_pvalues <- compute_qvalues(pvec)
     method_col_name <- "qvalue_qr"
     method_quantile_names <- paste0("qvalue_qr_", tau.list)
-    quantile_adjusted_pvalues <- apply(quantile.pvalue, 2, pecotmr:::compute_qvalues)
+    quantile_adjusted_pvalues <- apply(quantile.pvalue, 2, compute_qvalues)
   } else {
     stop("Invalid screen_method. Choose 'fdr' or 'qvalue'.")
   }
@@ -138,7 +138,7 @@ qr_screen <- function(
   }
 
   # Split variant_id and reorder columns
-  parsed <- pecotmr::parse_variant_id(df_result$variant_id)
+  parsed <- parse_variant_id(df_result$variant_id)
   df_result <- df_result %>%
     mutate(chr = parsed$chrom, pos = parsed$pos, A2 = parsed$A2, A1 = parsed$A1)
 
@@ -166,121 +166,83 @@ qr_screen <- function(
   ))
 }
 
-#' Perform Clumping and Pruning
-#' @param X Matrix of genotypes
-#' @param qr_results Results from QR_screen
-#' @param maf_list List of minor allele frequencies (optional)
-#' @param ld_clump_r2 R-squared threshold for initial LD clumping based on pvalue
-#' @param final_clump_r2 R-squared threshold for final LD clumping based on MAF
-#' @return A list containing final SNPs and clumped SNPs
-#' @importFrom bigstatsr FBM.code256
-#' @importFrom bigsnpr snp_clumping
+#' Perform Clumping and Pruning Across Contexts (Quantiles)
+#'
+#' Two-stage LD clumping tailored to quantile-regression screens: first, a
+#' per-tau p-value-weighted clump; second, a MAF-weighted (or uninformed)
+#' final clump over the per-tau union. Delegates the underlying bigsnpr
+#' call to \code{pecotmr::ld_clump_by_score}.
+#'
+#' @param X Matrix of genotypes (n x p_sig) restricted to significant SNPs.
+#' @param qr_results Output of \code{qr_screen()}; must contain
+#'   \code{sig.SNPs_names}, \code{tau_list}, \code{quantile_pvalue}, and
+#'   \code{sig_SNP_threshold}.
+#' @param maf_list Optional per-SNP minor allele frequencies aligned to the
+#'   original (pre-screen) SNP ordering, used to score the final clump.
+#' @param ld_clump_r2 r-squared threshold for per-tau clumping. Default 0.2.
+#' @param final_clump_r2 r-squared threshold for the final MAF clump.
+#'   Default 0.8.
+#' @return A list with \code{final_SNPs} and \code{clumped_SNPs}.
 #' @export
 multicontext_ld_clumping <- function(X, qr_results, maf_list = NULL, ld_clump_r2 = 0.2, final_clump_r2 = 0.8) {
-  # Extract significant SNP names
   sig_SNPs_names <- qr_results$sig.SNPs_names
 
-  # If no significant SNPs, return empty result
   if (length(sig_SNPs_names) == 0) {
     return(list(final_SNPs = NULL, clumped_SNPs = NULL, message = "No significant SNPs found"))
   }
 
-  # Check if X only contains one SNP (one column)
   if (ncol(X) == 1) {
-    print("Only one SNP in X. Skipping LD clumping.")
+    message("Only one SNP in X. Skipping LD clumping.")
     final_SNPs <- colnames(X)
-    return(list(final_SNPs = final_SNPs, clumped_SNPs = final_SNPs, message = "Only one SNP, no LD clumping performed"))
+    return(list(final_SNPs = final_SNPs, clumped_SNPs = final_SNPs,
+                message = "Only one SNP, no LD clumping performed"))
   }
 
-  # Extract genotype matrix for significant SNPs
-  G_all <- X # Only retain columns for significant SNPs
-
-  # Convert the genotype matrix into FBM format
-  code_vec <- c(0, 1, 2, rep(NA, 256 - 3))
-  G_all <- FBM.code256(
-    nrow = nrow(G_all),
-    ncol = ncol(G_all),
-    init = G_all,
-    code = code_vec
-  )
-
-  # Parse SNP names to extract chromosome and position information
+  # Parse chr/pos once.
   parsed_snp_info <- do.call(rbind, strsplit(sig_SNPs_names, ":"))
   chr <- as.numeric(sub("^chr", "", parsed_snp_info[, 1]))
-  pos <- as.numeric(parsed_snp_info[, 2]) # Extract position
+  pos <- as.numeric(parsed_snp_info[, 2])
 
-  # Step 1: Perform LD clumping for each tau based on p-values
+  # Stage 1: per-tau clump by -log10(p).
   clumped_snp_list <- list()
-
   for (itau in seq_along(qr_results$tau_list)) {
     tau_name <- paste0("p_qr_", qr_results$tau_list[itau])
-
-    # Extract p-values for the given quantile
     p_values_quantile <- qr_results$quantile_pvalue[, tau_name][qr_results$sig_SNP_threshold]
-    log_p_values <- -log10(p_values_quantile) # Calculate log10 p-values
-
-    # Perform LD clumping using p-values as S
-    ind_clumped <- snp_clumping(
-      G = G_all,
-      infos.chr = chr,
-      infos.pos = pos,
-      S = log_p_values, # Use log10 p-values for each quantile
-      thr.r2 = ld_clump_r2,
-      size = 100 / ld_clump_r2
-    ) # Window size of 500kb
-
-    # Store clumping results for each quantile
-    clumped_snp_list[[tau_name]] <- ind_clumped
+    log_p_values <- -log10(p_values_quantile)
+    clumped_snp_list[[tau_name]] <- ld_clump_by_score(
+      X, score = log_p_values, chr = chr, pos = pos, r2 = ld_clump_r2
+    )
   }
 
-  # Step 2: Take the union of clumping results across all quantiles
-  clumped_snp_union <- unique(unlist(clumped_snp_list)) # This is the SNP index, not the name
+  clumped_snp_union <- unique(unlist(clumped_snp_list))
   clumped_SNPs_name <- sig_SNPs_names[clumped_snp_union]
-  print(paste("Number of SNPs after union of clumping:", length(clumped_snp_union)))
+  message("Number of SNPs after union of clumping: ", length(clumped_snp_union))
 
   if (length(clumped_snp_union) == 1) {
-    message("Only one SNP found in the union. Skipping LD pruning and returning the single SNP directly.")
+    message("Only one SNP found in the union. Skipping final LD clumping.")
     final_SNPs <- sig_SNPs_names[clumped_snp_union]
     return(list(final_SNPs = final_SNPs, clumped_SNPs = clumped_SNPs_name))
   }
 
-
-  # Step 3: Sort results from union
+  # Stage 2: final clump over the union, ordered by chr/pos, scored by MAF (or NULL).
   sorted_indices <- order(chr[clumped_snp_union], pos[clumped_snp_union])
   chr_sorted <- chr[clumped_snp_union][sorted_indices]
   pos_sorted <- pos[clumped_snp_union][sorted_indices]
 
-  # Step 4: Initialize maf_values to NULL, and update only if maf_list is provided
   maf_values <- NULL
   if (!is.null(maf_list)) {
     maf_values <- maf_list[qr_results$sig_SNP_threshold][clumped_snp_union][sorted_indices]
   }
   G_union <- X[, clumped_snp_union, drop = FALSE][, sorted_indices]
-  if (!inherits(G_union, "FBM")) {
-    G_union <- FBM.code256(
-      nrow = nrow(G_union),
-      ncol = ncol(G_union),
-      init = G_union,
-      code = code_vec
-    )
-  }
-  # Step 5: Perform final clumping using maf_values (if available), otherwise proceed with NULL S
-  final_clumped <- snp_clumping(
-    G = G_union,
-    infos.chr = chr_sorted,
-    infos.pos = pos_sorted,
-    S = maf_values, # Use MAF values if provided, otherwise NULL
-    thr.r2 = final_clump_r2,
-    size = 100 / final_clump_r2
-  ) # Final clumping
 
-  # Restrict the genotype matrix to only the final clumped SNPs
-  G_final_clumped <- G_union[, final_clumped, drop = FALSE] # Limit G to the final clumped SNPs
-  # Get the final SNP names
+  final_clumped <- ld_clump_by_score(
+    G_union, score = maf_values, chr = chr_sorted, pos = pos_sorted, r2 = final_clump_r2
+  )
+
   final_SNPs <- sig_SNPs_names[clumped_snp_union][sorted_indices][final_clumped]
-  print(paste("Number of final SNPs after MAF-based clumping (if applied):", length(final_SNPs)))
+  message("Number of final SNPs after MAF-based clumping (if applied): ", length(final_SNPs))
 
-  return(list(final_SNPs = final_SNPs, clumped_SNPs = clumped_SNPs_name))
+  list(final_SNPs = final_SNPs, clumped_SNPs = clumped_SNPs_name)
 }
 
 #' Perform Quantile Regression Analysis to get beta
@@ -354,7 +316,7 @@ perform_qr_analysis <- function(X, Y, Z = NULL, tau_values = seq(0.05, 0.95, by 
       values_from = predictor_coef,
       names_prefix = "coef_qr_"
     )
-  parsed_ids <- pecotmr::parse_variant_id(result_table_wide$variant_id)
+  parsed_ids <- parse_variant_id(result_table_wide$variant_id)
   result_table_wide <- result_table_wide %>%
     mutate(chr = parsed_ids$chrom, pos = parsed_ids$pos, A2 = parsed_ids$A2, A1 = parsed_ids$A1) %>%
     select(chr, pos, A2, A1, everything())
@@ -363,250 +325,6 @@ perform_qr_analysis <- function(X, Y, Z = NULL, tau_values = seq(0.05, 0.95, by 
   return(result_table_wide)
 }
 
-#' Filter Highly Correlated SNPs
-#' @param X Matrix of genotypes
-#' @param cor_thres Correlation threshold for filtering
-#' @return A list containing filtered X matrix and filter IDs
-corr_filter <- function(X, cor_thres = 0.8) {
-  p <- ncol(X)
-
-  # Use Rfast for faster correlation calculation if available
-  if (requireNamespace("Rfast", quietly = TRUE)) {
-    cor.X <- Rfast::cora(X, large = TRUE)
-  } else {
-    cor.X <- cor(X)
-  }
-  Sigma.distance <- as.dist(1 - abs(cor.X))
-  fit <- hclust(Sigma.distance, method = "single")
-  clusters <- cutree(fit, h = 1 - cor_thres)
-  groups <- unique(clusters)
-  ind.delete <- NULL
-  X.new <- X
-  filter.id <- c(1:p)
-  for (ig in seq_along(groups)) {
-    temp.group <- which(clusters == groups[ig])
-    if (length(temp.group) > 1) {
-      ind.delete <- c(ind.delete, temp.group[-1])
-    }
-  }
-  ind.delete <- unique(ind.delete)
-  if ((length(ind.delete)) > 0) {
-    X.new <- as.matrix(X[, -ind.delete])
-    filter.id <- filter.id[-ind.delete]
-  }
-
-  # Check if X.new has only one column and ensure column names are preserved
-  if (ncol(X.new) == 1) {
-    colnames(X.new) <- colnames(X)[-ind.delete]
-  }
-
-  return(list(X.new = X.new, filter.id = filter.id))
-}
-
-
-
-#' Check and Remove Problematic Columns to Ensure Full Rank
-#'
-#' This function checks for problematic columns in the design matrix that cause it to be not full rank,
-#' and iteratively removes them based on the chosen strategy until the matrix is full rank.
-#'
-#' @param X Matrix of SNPs
-#' @param C Matrix of covariates (unnamed)
-#' @param strategy The strategy for removing problematic columns ("variance", "correlation", or "response_correlation")
-#' @param response Optional response vector for "response_correlation" strategy
-#' @param max_iterations Maximum number of iterations to attempt removing problematic columns
-#' @return Cleaned matrix X with problematic columns removed
-#' @noRd
-check_remove_highcorr_snp <- function(X = X, C = C, strategy = c("correlation", "variance", "response_correlation"), response = NULL, max_iterations = 300, corr_thresholds = seq(0.75, 0.5, by = -0.05)) {
-  strategy <- match.arg(strategy)
-  original_colnames <- colnames(X)
-  initial_ncol <- ncol(X) # Store the initial number of columns in X
-  iteration <- 0
-  # Combine the design matrix with X (SNPs) and C (covariates), keeping C without column names
-  X_design <- cbind(1, X, C) # Add an intercept column (1)
-  colnames_X_design <- c("Intercept", colnames(X)) # Assign column names only to X (SNPs) part
-
-  # Assign column names only to the X part, leaving C without names
-  colnames(X_design)[1:(length(colnames_X_design))] <- colnames_X_design
-
-  # Check the initial rank of the design matrix
-  matrix_rank <- qr(X_design)$rank
-  message("Initial rank of the design matrix: ", matrix_rank, " / ", ncol(X_design), " columns.")
-
-  # Skip remove_highcorr_snp if removing all problematic columns doesn't achieve full rank
-  skip_remove_highcorr <- FALSE
-
-  # First check: Try removing all problematic columns at once
-  if (matrix_rank < ncol(X_design)) {
-    message("Design matrix is not full rank, identifying all problematic columns...")
-
-    # QR decomposition to identify linearly dependent columns
-    qr_decomp <- qr(X_design)
-    R <- qr_decomp$rank
-    Q <- qr_decomp$pivot
-
-    # Get all problematic columns
-    problematic_cols <- Q[(R + 1):ncol(X_design)]
-    problematic_colnames <- colnames(X_design)[problematic_cols]
-    problematic_colnames <- problematic_colnames[problematic_colnames %in% colnames(X)]
-
-    if (length(problematic_colnames) > 0) {
-      message("Attempting to remove all problematic columns at once: ", paste(problematic_colnames, collapse = ", "))
-
-      # Remove all problematic columns at once
-      X_temp <- X[, !(colnames(X) %in% problematic_colnames), drop = FALSE]
-      X_design_temp <- cbind(1, X_temp, C)
-      colnames_X_design_temp <- c("Intercept", colnames(X_temp))
-      colnames(X_design_temp)[1:length(colnames_X_design_temp)] <- colnames_X_design_temp
-
-      # Check if removing all problematic columns achieves full rank
-      matrix_rank_temp <- qr(X_design_temp)$rank
-
-      if (matrix_rank_temp == ncol(X_design_temp)) {
-        message("Achieved full rank by removing all problematic columns at once. Proceeding with original logic...")
-      } else {
-        message("Removing all problematic columns did not achieve full rank. Skipping to corr_filter...")
-        skip_remove_highcorr <- TRUE
-      }
-    }
-  }
-
-  # Only proceed with remove_highcorr_snp if not skipping
-  if (!skip_remove_highcorr) {
-    while (matrix_rank < ncol(X_design) && iteration < max_iterations) {
-      message("Design matrix is not full rank, identifying problematic columns...")
-
-      qr_decomp <- qr(X_design)
-      R <- qr_decomp$rank
-      Q <- qr_decomp$pivot
-      problematic_cols <- Q[(R + 1):ncol(X_design)]
-      problematic_colnames <- colnames(X_design)[problematic_cols]
-      problematic_colnames <- problematic_colnames[problematic_colnames %in% colnames(X)]
-
-      if (length(problematic_colnames) == 0) {
-        message("No more problematic SNP columns found in X. Breaking the loop.")
-        break
-      }
-
-      message("Problematic SNP columns identified: ", paste(problematic_colnames, collapse = ", "))
-      X <- remove_highcorr_snp(X, problematic_colnames, strategy = strategy, response = response)
-
-      X_design <- cbind(1, X, C)
-      colnames_X_design <- c("Intercept", colnames(X))
-      colnames(X_design)[1:length(colnames_X_design)] <- colnames_X_design
-
-      matrix_rank <- qr(X_design)$rank
-      message("New rank of the design matrix: ", matrix_rank, " / ", ncol(X_design), " columns.")
-      iteration <- iteration + 1
-    }
-
-    if (iteration == max_iterations) {
-      warning("Maximum iterations reached. The design matrix may still not be full rank.")
-    }
-  }
-
-  # Final check and corr_filter if needed
-  matrix_rank <- qr(cbind(1, X, C))$rank
-  if (matrix_rank < ncol(cbind(1, X, C))) {
-    message("Applying corr_filter to ensure the design matrix is full rank...")
-    for (threshold in corr_thresholds) {
-      filter_result <- corr_filter(X, cor_thres = threshold)
-      X <- filter_result$X.new
-      X_design <- cbind(1, X, C)
-      colnames_X_design <- c("Intercept", colnames(X))
-      colnames(X_design)[1:length(colnames_X_design)] <- colnames_X_design
-
-      matrix_rank <- qr(X_design)$rank
-      message("Rank after corr_filter with threshold ", threshold, ": ", matrix_rank, " / ", ncol(X_design), " columns.")
-      if (matrix_rank == ncol(X_design)) {
-        break
-      }
-    }
-  }
-
-
-  if (iteration == max_iterations) {
-    warning("Maximum iterations reached. The design matrix may still not be full rank.")
-  }
-
-  if (ncol(X) == 1 && initial_ncol == 1) {
-    colnames(X) <- original_colnames
-  }
-  return(X)
-}
-
-#' Remove Problematic Columns Based on a Given Strategy
-#'
-#' This function removes problematic columns from a matrix based on different strategies, such as smallest variance,
-#' highest correlation, or lowest correlation with the response variable.
-#'
-#' @param X Matrix of SNPs
-#' @param problematic_cols A vector of problematic columns to be removed
-#' @param strategy The strategy for removing problematic columns ("variance", "correlation", or "response_correlation")
-#' @param response Optional response vector for "response_correlation" strategy
-#' @return Cleaned matrix X with the selected column removed
-#' @importFrom stats var cor
-#' @noRd
-remove_highcorr_snp <- function(X, problematic_cols, strategy = c("correlation", "variance", "response_correlation"), response = NULL) {
-  # Set default strategy
-  strategy <- match.arg(strategy)
-
-  message("Identified problematic columns: ", paste(problematic_cols, collapse = ", "))
-
-  if (length(problematic_cols) == 0) {
-    return(X) # If there are no problematic columns, return as is
-  }
-
-  if (length(problematic_cols) == 1) {
-    message("Only one problematic column: ", problematic_cols)
-    col_to_remove <- problematic_cols[1]
-    message("Removing column: ", col_to_remove)
-    X <- X[, !(colnames(X) %in% col_to_remove), drop = FALSE]
-    # If X only has one column left after removal, ensure its column name is preserved
-    if (ncol(X) == 1) {
-      colnames(X) <- colnames(X)[colnames(X) != col_to_remove] # Preserve remaining SNP name
-    }
-    return(X)
-  }
-
-  # Choose columns to remove based on the strategy
-  if (strategy == "variance") {
-    # Strategy 1: Remove the column with the smallest variance
-    variances <- apply(X[, problematic_cols, drop = FALSE], 2, var)
-    col_to_remove <- problematic_cols[which.min(variances)]
-    message("Removing column with the smallest variance: ", col_to_remove)
-  } else if (strategy == "correlation") {
-    # Strategy 2: Remove the column with the highest sum of absolute correlations
-    cor_matrix <- abs(cor(X[, problematic_cols, drop = FALSE])) # Calculate absolute correlation matrix
-    diag(cor_matrix) <- 0 # Ignore the diagonal (self-correlation)
-
-    if (length(problematic_cols) == 2) {
-      # If there are only two problematic columns, randomly remove one
-      col_to_remove <- sample(problematic_cols, 1)
-      message("Only two problematic columns, randomly removing: ", col_to_remove)
-    } else {
-      # Calculate sum of absolute correlations for each column
-      cor_sums <- colSums(cor_matrix)
-      col_to_remove <- problematic_cols[which.max(cor_sums)] # Remove the column with the largest sum of correlations
-      message("Removing column with highest sum of absolute correlations: ", col_to_remove)
-    }
-  } else if (strategy == "response_correlation" && !is.null(response)) {
-    # Strategy 3: Remove the column with the lowest correlation with the response variable
-    # FIXME: This strategy is potentially biased based on corr of response and variants
-    cor_with_response <- apply(X[, problematic_cols, drop = FALSE], 2, function(col) cor(col, response))
-    col_to_remove <- problematic_cols[which.min(abs(cor_with_response))]
-    message("Removing column with lowest correlation with the response: ", col_to_remove)
-  } else {
-    stop("Invalid strategy or missing response variable for 'response_correlation' strategy.")
-  }
-
-  # Remove the selected column from X
-  X <- X[, !(colnames(X) %in% col_to_remove), drop = FALSE]
-  if (ncol(X) == 1) {
-    colnames(X) <- colnames(X)[colnames(X) != col_to_remove] # Preserve remaining SNP name
-  }
-  return(X)
-}
 
 #' Calculate QR Coefficients and Pseudo R-squared Across Multiple Quantiles
 #'
@@ -626,7 +344,7 @@ calculate_qr_and_pseudo_R2 <- function(AssocData, tau.list, strategy = c("correl
   }
   strategy <- match.arg(strategy)
   # Check and handle problematic columns affecting the full rank of the design matrix
-  AssocData$X.filter <- check_remove_highcorr_snp(X = AssocData$X.filter, C = AssocData$C, strategy = strategy, response = AssocData$Y, corr_thresholds = corr_thresholds)
+  AssocData$X.filter <- enforce_design_full_rank(X = AssocData$X.filter, C = AssocData$C, strategy = strategy, response = AssocData$Y, corr_thresholds = corr_thresholds)
   snp_names <- colnames(AssocData$X.filter)
   # Build the cleaned design matrix using the filtered X and unnamed C
 
@@ -959,7 +677,7 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
     message("Starting LD panel filtering...")
     ld_result <- tryCatch(
       {
-        variants_kept <- pecotmr::filter_variants_by_ld_reference(colnames(X_filtered), ld_reference_meta_file)
+        variants_kept <- filter_variants_by_ld_reference(colnames(X_filtered), ld_reference_meta_file)
         if (length(variants_kept$data) == 0) NULL else variants_kept
       },
       error = function(e) {
@@ -1030,7 +748,7 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
       # Step 8: Initial filter of highly correlated SNPs
       message("Filtering highly correlated SNPs...")
       if (ncol(X_for_corr) > 1) {
-        filtered <- corr_filter(X_for_corr, initial_corr_filter_cutoff)
+        filtered <- ld_prune_by_correlation(X_for_corr, initial_corr_filter_cutoff)
         X.filter <- filtered$X.new
       } else {
         X.filter <- X_for_corr

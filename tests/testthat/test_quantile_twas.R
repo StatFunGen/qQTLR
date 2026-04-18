@@ -183,196 +183,6 @@ test_that("perform_grouped_integration single variant skips clustering", {
 })
 
 # ===========================================================================
-# corr_filter (internal)
-# ===========================================================================
-
-test_that("corr_filter removes highly correlated columns", {
-  set.seed(42)
-  n <- 50; p <- 10
-  X <- matrix(rnorm(n * p), nrow = n)
-  colnames(X) <- paste0("v", 1:p)
-  X[, 2] <- X[, 1] + rnorm(n, sd = 0.01)
-  result <- qQTLR:::corr_filter(X, cor_thres = 0.9)
-  expect_true(ncol(result$X.new) < p)
-  expect_true(length(result$filter.id) == ncol(result$X.new))
-})
-
-test_that("corr_filter keeps all columns when uncorrelated", {
-  set.seed(42)
-  n <- 100; p <- 5
-  X <- matrix(rnorm(n * p), nrow = n)
-  colnames(X) <- paste0("v", 1:p)
-  result <- qQTLR:::corr_filter(X, cor_thres = 0.99)
-  expect_equal(ncol(result$X.new), p)
-  expect_equal(result$filter.id, 1:p)
-})
-
-test_that("corr_filter preserves colnames for single remaining column", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n * 3), nrow = n)
-  colnames(X) <- c("a", "b", "c")
-  X[, 2] <- X[, 1] + rnorm(n, sd = 0.001)
-  X[, 3] <- X[, 1] + rnorm(n, sd = 0.001)
-  result <- qQTLR:::corr_filter(X, cor_thres = 0.5)
-  expect_true(ncol(result$X.new) >= 1)
-  expect_true(!is.null(colnames(result$X.new)))
-})
-
-test_that("corr_filter handles single-column input", {
-  set.seed(42)
-  n <- 30
-  X <- matrix(rnorm(n), nrow = n, ncol = 1)
-  colnames(X) <- "v1"
-  expect_error(qQTLR:::corr_filter(X, cor_thres = 0.8))
-})
-
-test_that("corr_filter with low threshold removes more columns", {
-  set.seed(42)
-  n <- 100; p <- 5
-  X <- matrix(rnorm(n * p), nrow = n)
-  colnames(X) <- paste0("v", 1:p)
-  X[, 2] <- X[, 1] + rnorm(n, sd = 0.1)
-  X[, 3] <- X[, 1] + rnorm(n, sd = 0.1)
-  X[, 5] <- X[, 4] + rnorm(n, sd = 0.1)
-  result_strict <- qQTLR:::corr_filter(X, cor_thres = 0.3)
-  result_lenient <- qQTLR:::corr_filter(X, cor_thres = 0.99)
-  expect_true(ncol(result_strict$X.new) <= ncol(result_lenient$X.new))
-})
-
-test_that("corr_filter preserves colnames when no columns deleted", {
-  set.seed(42)
-  n <- 100; p <- 3
-  X <- matrix(rnorm(n * p), nrow = n)
-  colnames(X) <- c("snp_a", "snp_b", "snp_c")
-  result <- qQTLR:::corr_filter(X, cor_thres = 0.999)
-  expect_equal(colnames(result$X.new), colnames(X))
-})
-
-# ===========================================================================
-# remove_highcorr_snp (internal)
-# ===========================================================================
-
-test_that("remove_highcorr_snp returns X unchanged when no problematic columns", {
-  X <- matrix(rnorm(100), nrow = 20, ncol = 5)
-  colnames(X) <- paste0("v", 1:5)
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = character(0), strategy = "correlation")
-  expect_equal(ncol(result), 5)
-})
-
-test_that("remove_highcorr_snp removes single problematic column", {
-  X <- matrix(rnorm(100), nrow = 20, ncol = 5)
-  colnames(X) <- paste0("v", 1:5)
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = "v3", strategy = "correlation")
-  expect_equal(ncol(result), 4)
-  expect_false("v3" %in% colnames(result))
-})
-
-test_that("remove_highcorr_snp variance strategy removes lowest variance column", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n * 3), nrow = n, ncol = 3)
-  colnames(X) <- c("low_var", "mid_var", "high_var")
-  X[, 1] <- X[, 1] * 0.01
-  X[, 3] <- X[, 3] * 10
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = c("low_var", "mid_var", "high_var"),
-                                           strategy = "variance")
-  expect_equal(ncol(result), 2)
-  expect_false("low_var" %in% colnames(result))
-})
-
-test_that("remove_highcorr_snp correlation strategy with two columns removes one randomly", {
-  set.seed(42)
-  X <- matrix(rnorm(100), nrow = 20, ncol = 5)
-  colnames(X) <- paste0("v", 1:5)
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = c("v1", "v2"), strategy = "correlation")
-  expect_equal(ncol(result), 4)
-  expect_true(xor("v1" %in% colnames(result), "v2" %in% colnames(result)) ||
-              (!("v1" %in% colnames(result)) && !("v2" %in% colnames(result))) == FALSE)
-})
-
-test_that("remove_highcorr_snp correlation strategy with 3+ cols removes highest sum", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n * 4), nrow = n, ncol = 4)
-  colnames(X) <- paste0("v", 1:4)
-  X[, 2] <- X[, 1] + rnorm(n, sd = 0.01)
-  X[, 3] <- X[, 1] + rnorm(n, sd = 0.01)
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = c("v1", "v2", "v3"),
-                                           strategy = "correlation")
-  expect_equal(ncol(result), 3)
-})
-
-test_that("remove_highcorr_snp response_correlation strategy removes lowest response corr", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n * 3), nrow = n, ncol = 3)
-  colnames(X) <- c("v1", "v2", "v3")
-  response <- X[, 1] * 2 + rnorm(n, sd = 0.1)
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = c("v1", "v2", "v3"),
-                                           strategy = "response_correlation",
-                                           response = response)
-  expect_equal(ncol(result), 2)
-  expect_true("v1" %in% colnames(result))
-})
-
-test_that("remove_highcorr_snp errors on invalid strategy", {
-  X <- matrix(rnorm(100), nrow = 20, ncol = 5)
-  colnames(X) <- paste0("v", 1:5)
-  expect_error(
-    qQTLR:::remove_highcorr_snp(X, problematic_cols = c("v1", "v2"),
-                                   strategy = "invalid_strategy"),
-    "arg"
-  )
-})
-
-test_that("remove_highcorr_snp preserves column name when single column remains", {
-  set.seed(42)
-  X <- matrix(rnorm(40), nrow = 20, ncol = 2)
-  colnames(X) <- c("keeper", "removed")
-  result <- qQTLR:::remove_highcorr_snp(X, problematic_cols = "removed", strategy = "correlation")
-  expect_equal(ncol(result), 1)
-  expect_equal(colnames(result), "keeper")
-})
-
-# ===========================================================================
-# check_remove_highcorr_snp (internal)
-# ===========================================================================
-
-test_that("check_remove_highcorr_snp returns full-rank matrix when already full rank", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n * 3), nrow = n, ncol = 3)
-  colnames(X) <- paste0("v", 1:3)
-  C <- matrix(rnorm(n * 2), nrow = n, ncol = 2)
-  result <- qQTLR:::check_remove_highcorr_snp(X = X, C = C, strategy = "correlation")
-  expect_true(is.matrix(result))
-  expect_true(ncol(result) >= 1)
-})
-
-test_that("check_remove_highcorr_snp handles rank-deficient design via corr_filter fallback", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n * 4), nrow = n, ncol = 4)
-  colnames(X) <- paste0("v", 1:4)
-  X[, 4] <- X[, 1] + X[, 2]
-  C <- NULL
-  result <- qQTLR:::check_remove_highcorr_snp(X = X, C = C, strategy = "correlation")
-  design <- cbind(1, result)
-  expect_equal(qr(design)$rank, ncol(design))
-})
-
-test_that("check_remove_highcorr_snp preserves colname for single-column input", {
-  set.seed(42)
-  n <- 50
-  X <- matrix(rnorm(n), nrow = n, ncol = 1)
-  colnames(X) <- "only_snp"
-  C <- NULL
-  result <- qQTLR:::check_remove_highcorr_snp(X = X, C = C, strategy = "correlation")
-  expect_equal(colnames(result), "only_snp")
-})
-
-# ===========================================================================
 # calculate_coef_heterogeneity (internal)
 # ===========================================================================
 
@@ -798,14 +608,14 @@ test_that("get_modularity handles all-negative weights", {
 })
 
 # ===========================================================================
-# check_remove_highcorr_snp corr_filter fallback (internal)
+# enforce_design_full_rank integration (imported from pecotmr)
 # ===========================================================================
 
-test_that("check_remove_highcorr_snp triggers corr_filter fallback for stubborn rank deficiency", {
+test_that("enforce_design_full_rank triggers correlation-prune fallback for stubborn rank deficiency", {
   set.seed(42)
   n <- 50
-  # Create a matrix where columns are highly correlated but not identical
-  # so QR removal won't fully fix the rank deficiency
+  # Columns highly correlated but not identical so QR removal won't
+  # fully fix the rank deficiency on its own.
   base <- rnorm(n)
   X <- cbind(
     base + rnorm(n, sd = 0.001),
@@ -814,28 +624,22 @@ test_that("check_remove_highcorr_snp triggers corr_filter fallback for stubborn 
     rnorm(n)
   )
   colnames(X) <- paste0("v", 1:4)
-  # Covariate that is also correlated with a column
   C <- matrix(X[, 4] + rnorm(n, sd = 0.001), ncol = 1)
-  result <- qQTLR:::check_remove_highcorr_snp(X = X, C = C, strategy = "correlation")
+  result <- enforce_design_full_rank(X = X, C = C, strategy = "correlation")
   design <- cbind(1, result, C)
   expect_equal(qr(design)$rank, ncol(design))
 })
 
-test_that("check_remove_highcorr_snp max_iterations warning path", {
+test_that("enforce_design_full_rank max_iterations warning path", {
   set.seed(42)
   n <- 50
-  # Create a rank-deficient matrix so the while loop enters
-  # but max_iterations = 1 limits iterations
   X <- matrix(rnorm(n * 4), nrow = n, ncol = 4)
   colnames(X) <- paste0("v", 1:4)
-  X[, 3] <- X[, 1] + X[, 2]  # linearly dependent
-  X[, 4] <- X[, 1] - X[, 2]  # another dependency
-  C <- NULL
-  # With max_iterations = 1, it may not fully resolve rank deficiency,
-  # triggering the corr_filter fallback
+  X[, 3] <- X[, 1] + X[, 2]
+  X[, 4] <- X[, 1] - X[, 2]
   expect_warning(
-    qQTLR:::check_remove_highcorr_snp(X = X, C = C, strategy = "correlation", max_iterations = 1),
-    "Maximum iterations reached"
+    enforce_design_full_rank(X = X, C = NULL, strategy = "correlation", max_iterations = 1),
+    "max_iterations reached"
   )
 })
 
