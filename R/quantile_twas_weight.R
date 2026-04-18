@@ -82,7 +82,7 @@ qr_screen <- function(
     pvec[ip] <- pvalue
   }
 
-  pvec <- apply(quantile.pvalue, 1, pecotmr:::pval_cauchy)
+  pvec <- apply(quantile.pvalue, 1, pval_cauchy)
 
   if (screen_method == "fdr") {
     adjusted_pvalues <- p.adjust(pvec)
@@ -90,10 +90,10 @@ qr_screen <- function(
     method_quantile_names <- paste0("fdr_p_qr_", tau.list)
     quantile_adjusted_pvalues <- apply(quantile.pvalue, 2, p.adjust)
   } else if (screen_method == "qvalue") {
-    adjusted_pvalues <- pecotmr:::compute_qvalues(pvec)
+    adjusted_pvalues <- compute_qvalues(pvec)
     method_col_name <- "qvalue_qr"
     method_quantile_names <- paste0("qvalue_qr_", tau.list)
-    quantile_adjusted_pvalues <- apply(quantile.pvalue, 2, pecotmr:::compute_qvalues)
+    quantile_adjusted_pvalues <- apply(quantile.pvalue, 2, compute_qvalues)
   } else {
     stop("Invalid screen_method. Choose 'fdr' or 'qvalue'.")
   }
@@ -138,7 +138,7 @@ qr_screen <- function(
   }
 
   # Split variant_id and reorder columns
-  parsed <- pecotmr::parse_variant_id(df_result$variant_id)
+  parsed <- parse_variant_id(df_result$variant_id)
   df_result <- df_result %>%
     mutate(chr = parsed$chrom, pos = parsed$pos, A2 = parsed$A2, A1 = parsed$A1)
 
@@ -354,7 +354,7 @@ perform_qr_analysis <- function(X, Y, Z = NULL, tau_values = seq(0.05, 0.95, by 
       values_from = predictor_coef,
       names_prefix = "coef_qr_"
     )
-  parsed_ids <- pecotmr::parse_variant_id(result_table_wide$variant_id)
+  parsed_ids <- parse_variant_id(result_table_wide$variant_id)
   result_table_wide <- result_table_wide %>%
     mutate(chr = parsed_ids$chrom, pos = parsed_ids$pos, A2 = parsed_ids$A2, A1 = parsed_ids$A1) %>%
     select(chr, pos, A2, A1, everything())
@@ -959,7 +959,7 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
     message("Starting LD panel filtering...")
     ld_result <- tryCatch(
       {
-        variants_kept <- pecotmr::filter_variants_by_ld_reference(colnames(X_filtered), ld_reference_meta_file)
+        variants_kept <- filter_variants_by_ld_reference(colnames(X_filtered), ld_reference_meta_file)
         if (length(variants_kept$data) == 0) NULL else variants_kept
       },
       error = function(e) {

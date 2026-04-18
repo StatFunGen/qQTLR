@@ -18,6 +18,7 @@ Imports:
     pecotmr,
     readr,
     stats,
+    susieR,
     tidyr,
     vroom
 Suggests:

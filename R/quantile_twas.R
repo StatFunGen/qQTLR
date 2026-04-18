@@ -377,7 +377,7 @@ load_quantile_twas_weights <- function(weight_db_files, tau_values = seq(0.01, 0
           if (!is.null(context_data$twas_weight) && !is.null(context_data$pseudo_R2)) {
             list(
               gene = gene,
-              context = pecotmr::clean_context_names(context, gene),
+              context = clean_context_names(context, gene),
               data = context_data
             )
           } else {

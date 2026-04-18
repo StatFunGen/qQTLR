@@ -165,7 +165,7 @@ quantile_twas_pipeline <- function(twas_weights_data,
   }
 
   # Step 1: Harmonize TWAS data
-  twas_data_qced_result <- pecotmr::harmonize_twas(twas_weights_data, ld_meta_file_path, gwas_meta_file,
+  twas_data_qced_result <- harmonize_twas(twas_weights_data, ld_meta_file_path, gwas_meta_file,
                                                     ld_reference_sample_size = ld_reference_sample_size,
                                                     column_file_path = column_file_path, comment_string = comment_string)
   twas_results_db <- lapply(names(twas_weights_data), function(weight_db) {
@@ -202,7 +202,7 @@ quantile_twas_pipeline <- function(twas_weights_data,
         if (length(twas_variants) == 0) {
           return(list(twas_rs_df = data.frame()))
         }
-        twas_rs <- pecotmr::twas_analysis(
+        twas_rs <- twas_analysis(
           twas_data_qced[[weight_db]][["weights_qced"]][[context]][[study]][["weights"]],
           twas_data_qced[[weight_db]][["gwas_qced"]][[study]],
           twas_data_qced[[weight_db]][["LD"]], twas_variants
@@ -212,8 +212,8 @@ quantile_twas_pipeline <- function(twas_weights_data,
         }
         twas_rs_df <- data.frame(
           gwas_study = study, method = sub("_[^_]+$", "", names(twas_rs)),
-          twas_z = pecotmr::find_data(twas_rs, c(2, "z")),
-          twas_pval = pecotmr::find_data(twas_rs, c(2, "pval")),
+          twas_z = find_data(twas_rs, c(2, "z")),
+          twas_pval = find_data(twas_rs, c(2, "pval")),
           context = context, molecular_id = weight_db
         )
         return(list(twas_rs_df = twas_rs_df))
