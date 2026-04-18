@@ -3,15 +3,13 @@
 # bare names (no `pecotmr:::` prefix) without triggering the R CMD check
 # warning "':::' calls which should be '::'".
 
-compute_qvalues <- NULL
-pval_cauchy     <- NULL
+compute_qvalues        <- NULL
+pval_cauchy            <- NULL
+drop_collinear_columns <- NULL
 
 .onLoad <- function(libname, pkgname) {
   ns_self <- asNamespace(pkgname)
-  assign("compute_qvalues",
-         utils::getFromNamespace("compute_qvalues", "pecotmr"),
-         envir = ns_self)
-  assign("pval_cauchy",
-         utils::getFromNamespace("pval_cauchy", "pecotmr"),
-         envir = ns_self)
+  for (sym in c("compute_qvalues", "pval_cauchy", "drop_collinear_columns")) {
+    assign(sym, utils::getFromNamespace(sym, "pecotmr"), envir = ns_self)
+  }
 }

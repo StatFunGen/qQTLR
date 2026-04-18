@@ -2,7 +2,7 @@
 % Please edit documentation in R/quantile_twas_weight.R
 \name{multicontext_ld_clumping}
 \alias{multicontext_ld_clumping}
-\title{Perform Clumping and Pruning}
+\title{Perform Clumping and Pruning Across Contexts (Quantiles)}
 \usage{
 multicontext_ld_clumping(
   X,
@@ -13,19 +13,26 @@ multicontext_ld_clumping(
 )
 }
 \arguments{
-\item{X}{Matrix of genotypes}
+\item{X}{Matrix of genotypes (n x p_sig) restricted to significant SNPs.}
 
-\item{qr_results}{Results from QR_screen}
+\item{qr_results}{Output of \code{qr_screen()}; must contain
+\code{sig.SNPs_names}, \code{tau_list}, \code{quantile_pvalue}, and
+\code{sig_SNP_threshold}.}
 
-\item{maf_list}{List of minor allele frequencies (optional)}
+\item{maf_list}{Optional per-SNP minor allele frequencies aligned to the
+original (pre-screen) SNP ordering, used to score the final clump.}
 
-\item{ld_clump_r2}{R-squared threshold for initial LD clumping based on pvalue}
+\item{ld_clump_r2}{r-squared threshold for per-tau clumping. Default 0.2.}
 
-\item{final_clump_r2}{R-squared threshold for final LD clumping based on MAF}
+\item{final_clump_r2}{r-squared threshold for the final MAF clump.
+Default 0.8.}
 }
 \value{
-A list containing final SNPs and clumped SNPs
+A list with \code{final_SNPs} and \code{clumped_SNPs}.
 }
 \description{
-Perform Clumping and Pruning
+Two-stage LD clumping tailored to quantile-regression screens: first, a
+per-tau p-value-weighted clump; second, a MAF-weighted (or uninformed)
+final clump over the per-tau union. Delegates the underlying bigsnpr
+call to \code{pecotmr::ld_clump_by_score}.
 }
