@@ -210,13 +210,7 @@ quantile_twas_pipeline <- function(twas_weights_data,
         if (is.null(twas_rs)) {
           return(list(twas_rs_df = data.frame()))
         }
-        twas_rs_df <- data.frame(
-          gwas_study = study, method = sub("_[^_]+$", "", names(twas_rs)),
-          twas_z = find_data(twas_rs, c(2, "z")),
-          twas_pval = find_data(twas_rs, c(2, "pval")),
-          context = context, molecular_id = weight_db
-        )
-        return(list(twas_rs_df = twas_rs_df))
+        return(list(twas_rs_df = build_twas_score_row(twas_rs, weight_db, context, study)))
       })
       twas_context_table <- do.call(rbind, lapply(study_results, function(x) x$twas_rs_df))
       return(list(twas_context_table = twas_context_table))
