@@ -22,10 +22,13 @@ Imports:
     tidyr,
     vroom
 Suggests:
+    knitr,
     quadprog,
     quantreg,
     qvalue,
     Rfast,
+    rmarkdown,
     testthat,
     XICOR
+VignetteBuilder: knitr
 RoxygenNote: 7.3.3

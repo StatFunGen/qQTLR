@@ -55,3 +55,9 @@ jobs:
 
       #- name: Run R CMD CHECK
         #run: pixi run --environment ${{ matrix.environment }} --manifest-path /tmp/pixi/pixi.toml rcmdcheck
+
+      #- name: Run BiocCheckGitClone
+        #run: pixi run --environment ${{ matrix.environment }} --manifest-path /tmp/pixi/pixi.toml bioccheck_git_clone
+
+      #- name: Run BiocCheck
+        #run: pixi run --environment ${{ matrix.environment }} --manifest-path /tmp/pixi/pixi.toml bioccheck

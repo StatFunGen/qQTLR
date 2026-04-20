@@ -19,32 +19,34 @@ build:
 
 requirements:
   host:
+    - bioconductor-qvalue
     - r-base
     - r-bigsnpr
     - r-bigstatsr
     - r-dplyr
     - r-pecotmr
-    - r-readr
-    - r-tidyr
-    - r-vroom
     - r-quadprog
     - r-quantreg
-    - bioconductor-qvalue
+    - r-readr
     - r-rfast
+    - r-susier
+    - r-tidyr
+    - r-vroom
     - r-xicor
   run:
+    - bioconductor-qvalue
     - r-base
     - r-bigsnpr
     - r-bigstatsr
     - r-dplyr
     - r-pecotmr
-    - r-readr
-    - r-tidyr
-    - r-vroom
     - r-quadprog
     - r-quantreg
-    - bioconductor-qvalue
+    - r-readr
     - r-rfast
+    - r-susier
+    - r-tidyr
+    - r-vroom
     - r-xicor
 
 tests:
@@ -54,5 +56,9 @@ tests:
 about:
   license: MIT
   license_file: LICENSE
-  summary: pecotmr implements pair-wise enrichment, colocalization, TWAS and Mendelian Randomization to integrate QTL and GWAS analysis based on a fine-mapped single effects model.
+  summary: qQTLR implements quantile QTL (qQTL) analysis and quantile-based transcriptome-wide association study (qTWAS) pipelines for distributional genetic effects on molecular phenotypes.
   homepage: https://github.com/StatFunGen/qQTLR
+
+extra:
+  recipe-maintainers:
+    - danielnachun

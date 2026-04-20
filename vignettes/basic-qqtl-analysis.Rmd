@@ -1,0 +1,101 @@
+---
+title: "Basic qQTL Analysis with qQTLR: Calling qQTLs and Assessing Heterogeneity"
+author: "qQTLR developers"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Basic qQTL Analysis with qQTLR: Calling qQTLs and Assessing Heterogeneity}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## Overview
+
+Quantile QTL (qQTL) analysis models how genetic variants influence the
+**entire distribution** of a molecular phenotype rather than its mean alone.
+Compared with linear xQTL, this captures **non-linear**, **context-dependent**
+regulatory effects — including variants that act primarily at the
+distributional extremes or whose effect sizes vary across expression levels.
+
+This vignette walks through a minimal qQTL workflow with `qQTLR`:
+
+1. Screen variants with the **QRank** score test across a grid of quantiles.
+2. Combine quantile-specific p-values across the distribution.
+3. Assess **distributional heterogeneity** via the Chatterjee correlation test
+   (implemented in `calculate_xi_correlation()`).
+4. Classify variants as *qQTL-only*, *shared-homogeneous*, or
+   *shared-heterogeneous* relative to a linear xQTL reference.
+
+## Setup
+
+```{r load-pkgs}
+library(qQTLR)
+```
+
+## Step 1 — Screen quantile associations
+
+`qr_screen()` performs a fast QRank-based screen across a grid of quantiles
+(τ = 0.1, 0.15, …, 0.9 by default) and returns per-variant p-values at each
+quantile, plus a Cauchy-combined p-value across quantiles.
+
+```{r qr-screen}
+# Placeholder — replace X, y, covariates with your data
+# qr_screen_result <- qr_screen(
+#   X    = genotype_matrix,
+#   y    = phenotype_vector,
+#   Z    = covariate_matrix,
+#   tau  = seq(0.1, 0.9, by = 0.05)
+# )
+```
+
+## Step 2 — Fit full quantile regressions at significant variants
+
+Follow up the screen with full quantile regressions at the selected variants
+to obtain quantile-specific effect sizes and standard errors:
+
+```{r qr-fit}
+# perform_qr_analysis(
+#   X   = genotype_matrix[, top_variants],
+#   y   = phenotype_vector,
+#   Z   = covariate_matrix,
+#   tau = seq(0.1, 0.9, by = 0.05)
+# )
+```
+
+## Step 3 — Assess distributional heterogeneity
+
+Among variants that are also significant in linear xQTL ("shared" qQTLs), use
+the Chatterjee ξ correlation to test whether their effect sizes vary across
+quantiles. A significant ξ indicates a *shared-heterogeneous* qQTL — the mean
+effect is real, but the underlying regulatory architecture is distributional.
+
+```{r xi}
+# calculate_xi_correlation(tau_grid, beta_tau)
+```
+
+## Step 4 — Classify variants
+
+Collectively, **qQTL-het** = *qQTL-only* ∪ *shared-heterogeneous*; these are
+the variants that carry information beyond the linear model and are the main
+biological payload of a qQTL scan.
+
+| Category                    | Linear xQTL significant? | qQTL significant? | Heterogeneity (ξ) |
+|-----------------------------|:------------------------:|:-----------------:|:-----------------:|
+| `xQTL-only`                 | ✓                        | ✗                 | —                 |
+| `shared-homogeneous`        | ✓                        | ✓                 | not significant   |
+| `shared-heterogeneous`      | ✓                        | ✓                 | significant       |
+| `qQTL-only`                 | ✗                        | ✓                 | —                 |
+
+## Next steps
+
+- [Interpreting qQTL analysis results](interpreting-qqtl-results.html)
+- [vQTL as a special case of qQTL](vqtl-special-case.html)
+- [The qQTL TWAS pipeline](qtwas-pipeline.html)

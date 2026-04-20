@@ -1,0 +1,93 @@
+---
+title: "vQTL as a Special Case of qQTL"
+author: "qQTLR developers"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{vQTL as a Special Case of qQTL}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## Motivation
+
+Variance QTLs (vQTLs) identify variants that change the *spread* of a
+molecular phenotype. `qQTLR` implements the **QUAIL** rank-score approach
+for vQTL discovery, and — more importantly — shows empirically and
+theoretically that **vQTL is a special case of qQTL**: a variant with
+symmetric, opposite-sign effects at the lower and upper quantiles
+(around τ ≈ 0.1 and τ ≈ 0.9) with no median effect will be picked up by
+qQTL as well as by vQTL.
+
+In the qQTLR manuscript, 93.66% of significant vQTL associations were
+recovered by qQTL, predominantly at both tail quantiles simultaneously,
+confirming the nested relationship.
+
+## Running QUAIL-based vQTL analysis
+
+```{r load}
+library(qQTLR)
+```
+
+`qQTLR` exposes two pipeline entry points for vQTL analysis:
+
+- `QUAIL_rank_score_pipeline()` — compute the QUAIL rank score from a
+  phenotype and its covariates across a grid of quantiles.
+- `QUAIL_pipeline()` — run the end-to-end vQTL test that regresses the
+  rank score on genotypes.
+
+```{r quail}
+# quail_scores <- QUAIL_rank_score_pipeline(
+#   y   = phenotype_vector,
+#   Z   = covariate_matrix,
+#   tau = seq(0.05, 0.95, by = 0.05)
+# )
+#
+# vqtl_result <- QUAIL_pipeline(
+#   X      = genotype_matrix,
+#   scores = quail_scores,
+#   Z      = covariate_matrix
+# )
+```
+
+## Reconciling vQTL with qQTL output
+
+For the same variant, compare:
+
+- the **vQTL p-value** from `QUAIL_pipeline()`;
+- the **qQTL Cauchy-combined p-value** from `qr_screen()`;
+- the **per-quantile effect sizes** from `perform_qr_analysis()`.
+
+Expected joint pattern for a pure variance effect:
+
+- vQTL significant.
+- qQTL significant with comparable p-value.
+- Effect sizes symmetric in magnitude and opposite in sign at the low and
+  high tails, ≈ 0 at the median.
+- Linear xQTL may be non-significant.
+
+Asymmetric distributional effects — for example lower-tail-only — will
+appear as qQTL signals but may be missed by vQTL, which assumes symmetric
+spread. This is why qQTL is strictly more general.
+
+## When to use which
+
+| Situation                                               | Recommended tool     |
+|---------------------------------------------------------|----------------------|
+| Symmetric variance changes only                         | QUAIL vQTL           |
+| Full distributional scan (tails, asymmetry, gradients)  | qQTL via `qr_screen` |
+| Screening → mechanism follow-up                         | qQTL then targeted   |
+
+## See also
+
+- [Basic qQTL analysis](basic-qqtl-analysis.html)
+- [Interpreting qQTL results](interpreting-qqtl-results.html)
+- [iQTL simulation settings](iqtl-simulation.html)

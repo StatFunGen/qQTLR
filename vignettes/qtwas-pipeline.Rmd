@@ -1,0 +1,124 @@
+---
+title: "The qQTL TWAS (qTWAS) Pipeline"
+author: "qQTLR developers"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{The qQTL TWAS (qTWAS) Pipeline}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## Overview
+
+Quantile-based transcriptome-wide association study (**qTWAS**) extends
+standard TWAS by training prediction models at multiple quantiles of the
+molecular phenotype, then combining the resulting gene–trait tests across
+quantiles. The goal is to recover gene associations with GWAS traits
+whose pathogenic effects are **distributional** — e.g., threshold-
+dependent immune dysfunction or telomere-length regulation — and are
+missed by mean-based TWAS.
+
+In the manuscript, qTWAS recovers 34 novel AD gene associations and 90
+qTWAS-only genes for telomere length across 18 brain molecular contexts.
+
+## Pipeline entry points in qQTLR
+
+- `quantile_twas_weight_pipeline()` — train per-gene, per-context qTWAS
+  prediction weights at a grid of quantiles.
+- `quantile_twas_pipeline()` — apply trained weights to GWAS summary
+  statistics and produce gene-level z-scores / p-values per quantile,
+  combined across quantiles (Cauchy combination).
+- `load_quantile_twas_weights()` — load pretrained qTWAS weights from the
+  published brain resource.
+- `multicontext_ld_clumping()` — clump across contexts to resolve
+  correlated gene-context hits. (Delegates to `pecotmr`'s LD clumping /
+  pruning internals.)
+
+## Step 1 — Build qTWAS weights
+
+```{r load}
+library(qQTLR)
+```
+
+```{r weights}
+# quantile_twas_weight_pipeline(
+#   genotype_file = "genotypes.bed",
+#   phenotype     = expression_matrix,
+#   covariates    = covariate_matrix,
+#   region        = "cis-window or TADB",
+#   tau           = seq(0.05, 0.95, by = 0.05),
+#   output        = "weights/"
+# )
+```
+
+Each gene × context × τ combination yields a vector of SNP weights. The
+manuscript trains ~70 000 such gene-context models across 18 brain
+contexts.
+
+## Step 2 — Apply weights to GWAS summary statistics
+
+```{r twas}
+# twas_result <- quantile_twas_pipeline(
+#   weights         = loaded_weights,
+#   gwas_sumstats   = gwas_df,
+#   ld_reference    = ld_ref,
+#   combine_method  = "cauchy"
+# )
+```
+
+Internally, per-quantile z-scores are built with
+`pecotmr::build_twas_score_row()` and combined across quantiles. The
+output contains:
+
+- Per-quantile TWAS z/p;
+- Cauchy-combined p-value across quantiles;
+- A flag for whether the gene is **qTWAS-only** relative to a standard
+  TWAS reference.
+
+## Step 3 — Multi-context LD clumping
+
+When a gene is tested across many molecular contexts (bulk tissues,
+cell types, proteins), signals correlate. Use
+`multicontext_ld_clumping()` to resolve these to a parsimonious set of
+independent hits before downstream interpretation.
+
+```{r clump}
+# clumped <- multicontext_ld_clumping(twas_result, ld_reference = ld_ref)
+```
+
+## Using the pre-trained brain qTWAS resource
+
+The manuscript publishes qTWAS weights across 18 FunGen-xQTL brain
+contexts (bulk-tissue eQTL across 9 regions, single-nucleus eQTL across
+6 cell types, pQTL across 3 regions). Load them with
+`load_quantile_twas_weights()` and apply them to any external GWAS.
+
+```{r resource}
+# weights <- load_quantile_twas_weights("path/or/synapse/id")
+```
+
+## Interpreting qTWAS-only genes
+
+- Pathway enrichment in the manuscript points to **immune regulation**,
+  **lipid metabolism**, and **tau binding** for AD qTWAS-only genes, and
+  to **telomere maintenance** machinery for telomere-length qTWAS-only
+  genes.
+- qTWAS-only hits with suggestive (p < 1 × 10⁻⁴) linear TWAS signals are
+  generally the most robust; isolated qTWAS signals without any
+  mean-level support warrant extra scrutiny.
+
+## See also
+
+- [Basic qQTL analysis](basic-qqtl-analysis.html)
+- [Interpreting qQTL results](interpreting-qqtl-results.html)
+- [vQTL as a special case of qQTL](vqtl-special-case.html)
+- [iQTL simulation settings](iqtl-simulation.html)

@@ -1,0 +1,69 @@
+url: https://statfungen.github.io/qQTLR
+
+template:
+ bootstrap: 5
+ light-switch: true
+ math-rendering: katex
+ bslib:
+  base_font: { google: "Roboto" }
+  heading_font: { google: "Roboto Slab" }
+  code_font: { google: "JetBrains Mono" }
+
+development:
+ mode: auto
+
+home:
+ links:
+ - text: Learn more
+   href: https://github.com/StatFunGen/qQTLR
+ - text: Report a bug
+   href: https://github.com/StatFunGen/qQTLR/issues
+
+navbar:
+ structure:
+  left: [intro, reference, articles]
+  right: [search, github, lightswitch]
+ components:
+  intro:
+   icon: fa fa-play-circle
+   text: Get Started
+   href: articles/basic-qqtl-analysis.html
+   aria-label: Get started with qQTLR
+  reference:
+   icon: fa fa-file-code
+   text: Functions
+   href: reference/index.html
+   aria-label: Function reference
+  articles:
+   icon: fa fa-book-reader
+   text: Vignettes
+   href: articles/index.html
+   aria-label: Articles and vignettes
+  github:
+   icon: fab fa-github
+   href: https://github.com/StatFunGen/qQTLR
+   aria-label: View source on GitHub
+
+articles:
+  - title: "Getting Started"
+    navbar: ~
+    contents:
+    - basic-qqtl-analysis
+    - interpreting-qqtl-results
+  - title: "Relationship to Other Non-linear QTL Approaches"
+    desc: >
+      How qQTL relates to variance QTL (vQTL) and interaction QTL (iQTL).
+    contents:
+    - vqtl-special-case
+    - iqtl-simulation
+  - title: "GWAS Data Integration"
+    desc: >
+      Quantile-based transcriptome-wide association study (qTWAS) pipeline
+      for gene prioritization from GWAS.
+    contents:
+    - qtwas-pipeline
+
+footer:
+ structure:
+  left: developed_by
+  right: built_with

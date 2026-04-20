@@ -12,7 +12,7 @@ When we are ready to tag a new release, we use this action to create in the repo
     - The commit checksum is optional --- by default it will use the latest commit to repository, but you can specify an older commit if needed.  Do **not** use a commit that is older than the commit used for the current version.
 5. Click the green "Run workflow" button to dispatch the workflow.
 ## How to build a new conda package with the "Build conda package" GitHub Action
-When we have tagged a new release, we use this action to build a new conda package.  The conda packages are currently uploaded to the [personal channel](https://anaconda.org/dnachun) of Daniel Nachun.
+When we have tagged a new release, we use this action to build a new conda package.  The conda packages are currently uploaded to the [personal channel](https://anaconda.org/dnachun) of Daniel Nachun.  Upon submission to Bioconductor, a recipe will be submitted to bioconda and this workflow will be replaced by one to submit releases to Bioconductor, and bioconda will automatically update the package.
 1. Use the "Upload new release" GitHub Action to tag a new release.  This workflow will fail if you try to build a package for a version which is not already tagged.
 2. Go to "Actions" at the top of the repository page.
 3. Go to the "Build conda package" action on the side bar.

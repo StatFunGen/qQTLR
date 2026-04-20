@@ -1,0 +1,93 @@
+---
+title: "Interpreting qQTL Analysis Results"
+author: "qQTLR developers"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Interpreting qQTL Analysis Results}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## From significance to biology
+
+Quantile-specific p-values and effect sizes are only the starting point.
+The biological value of a qQTL scan comes from reading the **shape** of the
+effect across the quantile grid (τ = 0.1, …, 0.9). This vignette outlines
+recurring patterns and how they map onto regulatory mechanisms, drawing on
+examples from the qQTLR manuscript.
+
+## Canonical quantile-effect patterns
+
+```{r load}
+library(qQTLR)
+```
+
+### 1. Symmetric tail effects → variance QTL (vQTL)
+
+Opposite-sign effects at τ = 0.1 and τ = 0.9 with ≈ 0 effect at the median
+indicate a *variance-increasing* genotype that does not shift the mean.
+Linear regression is blind to these variants; vQTL methods such as QUAIL
+can recover them and qQTL captures them as a special case.
+
+*Example from the manuscript:* `PITRM1` (chr10:3147188:C>T) in ROSMAP AC —
+linear β = 0.108, p = 0.0126; vQTL p = 3.97 × 10⁻¹⁴; qQTL p = 1.72 × 10⁻⁷.
+
+### 2. One-tail enrichment → context-specific effects at phenotypic extremes
+
+Significance only at τ = 0.1 *or* τ = 0.9 suggests the variant acts only in
+a vulnerable sub-population (e.g., individuals with already-low expression,
+or a specific cell-type composition, or a specific interaction background).
+
+*Example from the manuscript:* `TMEM106B` (chr7:12086129:A>G) in excitatory
+neurons — significant at τ = 0.1–0.2 only; follow-up iQTL testing revealed
+the pattern is partly explained by *APOE* ε4 interaction.
+
+### 3. Monotone effect across quantiles → progressive regulatory gradient
+
+Effect size that monotonically strengthens from low to high (or vice versa)
+quantiles suggests coordinated mechanisms that compound as baseline
+expression shifts — often involving multiple epigenetic layers.
+
+*Example from the manuscript:* `CHRNE` vs. `SCIMP` at chr17 — opposite
+directions of the quantile gradient, linked to coordinated DNA methylation,
+H3K9ac and chromatin accessibility changes.
+
+## Deciding which follow-ups are warranted
+
+| Observed pattern                          | Suggested follow-up                                         |
+|-------------------------------------------|-------------------------------------------------------------|
+| Symmetric tails, no mean effect           | Confirm with vQTL (QUAIL); look for latent interactions     |
+| One-tail only, plausible interacting var  | Targeted iQTL test against candidate factors (sex, APOE…)   |
+| Monotone gradient                         | Epigenomic colocalization (caQTL / mQTL / haQTL); mediation |
+| qQTL-only + enriched annotations          | Cross-cell-type regulatory element / chromatin loop lookup  |
+
+## Heterogeneity vs. discovery
+
+`qQTL-het` — the union of qQTL-only and shared-heterogeneous variants —
+represent regulatory effects that **cannot** be recovered by linear
+modeling alone. The manuscript reports ≈ 28% of qQTLs are qQTL-het across
+contexts, with the proportion varying up to ≈ 50% in some pQTL contexts.
+
+## Caveats
+
+- Quantile regression is *less* powerful than linear regression for pure
+  mean effects. Do not replace xQTL with qQTL — use them together.
+- Tail quantiles depend on sample size and distributional tails; extreme
+  effects at τ = 0.05 or 0.95 can be unstable in small cohorts.
+- Always sanity-check tail effects against raw genotype-stratified
+  distributions before reporting a "variance QTL" or "extreme-only" effect.
+
+## See also
+
+- [Basic qQTL analysis](basic-qqtl-analysis.html)
+- [vQTL as a special case of qQTL](vqtl-special-case.html)
+- [iQTL simulation settings](iqtl-simulation.html)

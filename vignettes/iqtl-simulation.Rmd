@@ -1,0 +1,98 @@
+---
+title: "Simulation Settings for iQTL and Detection via qQTL"
+author: "qQTLR developers"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Simulation Settings for iQTL and Detection via qQTL}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## Motivation
+
+Interaction QTLs (iQTLs) test for context-dependent regulation (sex,
+age, *APOE* ε4 dosage, cell-type fraction, …) using a parametric
+G + E + G×E model. They require the interacting factor to be specified
+in advance and — as shown in the qQTLR manuscript — have limited power
+and robustness at realistic sample sizes.
+
+qQTL can be viewed as a **factor-agnostic screen** for some classes of
+interaction effects: when the interaction causes the genotype to act
+differently across expression strata, the signal shows up as
+distributional heterogeneity.
+
+This vignette describes the simulation settings used in the manuscript
+to compare iQTL, qQTL and linear xQTL, and how to reproduce them.
+
+## Interaction taxonomy
+
+Following Kasela et al. (2024), stratified genetic effects are
+categorized by the sign of the main and interaction effects:
+
+| Category        | Main effect          | Interaction effect  | Linear xQTL visible? | qQTL visible?     |
+|-----------------|----------------------|---------------------|:--------------------:|:-----------------:|
+| *Amplifying*    | same sign as G×E     | same sign           | ✓ (strong)           | ✓ (often het.)    |
+| *Counteracting* | opposite sign to G×E | opposite sign       | often cancels        | ✓ (better power)  |
+| *Uncertain*     | ≈ 0                  | significant         | ✗                    | weak              |
+
+The empirical observation from the manuscript: qQTL recovers ≈ 99% of
+amplifying iQTLs, but ≤ 20% of counteracting and ≤ 35% of uncertain
+iQTLs.
+
+## Simulation recipe
+
+Parameters calibrated to FunGen-xQTL-scale data:
+
+- Sample size: n ≈ 300 – 1000 per context.
+- MAF: U(0.05, 0.5); additive coding 0/1/2.
+- Interacting factor E: binary or continuous (e.g., cell fraction).
+- Main effect β_G, interaction effect β_{G×E} chosen to produce each
+  regime (amplifying / counteracting / uncertain) with matched total
+  variance explained.
+- Error distribution: Gaussian (primary) and heavy-tailed (sensitivity).
+
+For each simulated phenotype, analyze with:
+
+1. Linear xQTL (`lm(y ~ G + E + covariates)`).
+2. iQTL (`lm(y ~ G * E + covariates)`; test G×E term).
+3. qQTL (`qr_screen` across τ = 0.1 – 0.9).
+
+```{r load}
+library(qQTLR)
+# Placeholder — a self-contained simulation helper for interaction regimes
+# will be added in a future release. For now, see the manuscript Methods.
+```
+
+## Key results to reproduce
+
+- **Well-powered regime (α = 0.05):** amplifying iQTLs ≈ 99% overlap
+  between qQTL and xQTL; counteracting iQTLs preferentially detected by
+  qQTL; uncertain iQTLs poorly detected by either.
+- **Genome-wide regime (α = 1 × 10⁻⁶):** detection rates drop sharply
+  for all methods. qQTL retains a modest edge for counteracting
+  interactions but absolute power is low.
+- Among amplifying iQTLs that qQTL picks up at α = 0.05, ≈ 95% exhibit
+  Chatterjee ξ heterogeneity (p_ξ < 0.05).
+
+## Practical takeaway
+
+qQTL is a useful **screening layer** to prioritize loci for targeted
+iQTL follow-up with specific candidate factors (see the `TMEM106B`
+*APOE* ε4 example). It does **not** replace comprehensive iQTL testing:
+counteracting and uncertain interactions without distributional
+signatures will be missed.
+
+## See also
+
+- [Basic qQTL analysis](basic-qqtl-analysis.html)
+- [vQTL as a special case of qQTL](vqtl-special-case.html)
+- [Interpreting qQTL results](interpreting-qqtl-results.html)
