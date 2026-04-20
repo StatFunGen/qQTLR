@@ -5,7 +5,7 @@ Version: 0.1.0
 Date: 2026-04-17
 Title: Quantile QTL Analysis
 Description: Quantile QTL analysis.
-URL: https://github.com/StatFunGen/qQTLR
+URL: https://statfungen.github.io/qQTLR, https://github.com/StatFunGen/qQTLR
 BugReports: https://github.com/StatFunGen/qQTLR/issues
 Authors@R: c(person("Anjing", "Liu", email = "anjing.liu@example.com", role = c("cre", "aut")),
                   person("Gao", "Wang", role = "ctb"))

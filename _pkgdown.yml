@@ -56,12 +56,20 @@ articles:
     contents:
     - vqtl-special-case
     - iqtl-simulation
-  - title: "GWAS Data Integration"
+  - title: "qTWAS Weight Training"
     desc: >
-      Quantile-based transcriptome-wide association study (qTWAS) pipeline
-      for gene prioritization from GWAS.
+      Training quantile-based TWAS (qTWAS) prediction weights in qQTLR.
+      Weight application to GWAS is performed via the FunGen-xQTL
+      pipeline referenced in the manuscript notes.
     contents:
     - qtwas-pipeline
+  - title: "Manuscript Pipelines"
+    desc: >
+      Pointers to the FunGen-xQTL protocol pipelines used in
+      Liu et al. 2026+ for qQTL calling, hierarchical multiple testing,
+      EOO and sLDSC enrichment, and cTWAS association testing.
+    contents:
+    - manuscript-pipeline-notes
 
 footer:
  structure:

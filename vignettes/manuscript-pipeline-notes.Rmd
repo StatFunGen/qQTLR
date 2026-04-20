@@ -1,0 +1,104 @@
+---
+title: "Notes on the qQTL Manuscript Pipelines (Liu et al., 2026+)"
+author: "qQTLR developers"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Notes on the qQTL Manuscript Pipelines (Liu et al., 2026+)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## Scope
+
+The `qQTLR` R package provides **interactive, function-level** building
+blocks for quantile QTL analysis: QRank-based screening, full quantile
+regressions, vQTL detection via QUAIL, Chatterjee ξ heterogeneity
+testing, and qTWAS weight training. For **end-to-end, production-scale
+pipelines** — the exact workflows used to produce the results in the
+qQTL manuscript (Liu et al., 2026+, FunGen-xQTL) — please refer to the
+FunGen-xQTL protocol documentation listed below.
+
+The manuscript-scale analyses combine `qQTLR` with upstream QC,
+covariate modelling, multiple-testing machinery, enrichment
+computations, and downstream association testing that are orchestrated
+outside the R package itself.
+
+## Pipeline references
+
+### qQTL calling
+
+End-to-end per-gene qQTL scan (QRank screen, full quantile regressions,
+quantile-specific effect sizes), producing the tables consumed
+downstream:
+
+<https://statfungen.github.io/xqtl-protocol/code/association_scan/quantile_models/qr_and_twas.html>
+
+### Hierarchical multiple-testing (HMT)
+
+Gene-level and variant-level FDR control across quantiles and contexts,
+as used in the manuscript (per-gene screening → across-gene correction):
+
+<https://statfungen.github.io/xqtl-protocol/code/association_scan/qtl_association_postprocessing.html>
+
+### EOO enrichment
+
+"Enrichment of overlapping" (EOO) analysis comparing qQTL-only vs. xQTL
+variants against functional annotation categories (cell-type-specific
+regulatory elements, chromatin interaction loops, TF binding sites,
+etc.), as used to produce the enrichment figures in the manuscript:
+
+<https://statfungen.github.io/xqtl-protocol/code/enrichment/eoo_enrichment.html>
+
+### Stratified LD score regression (sLDSC)
+
+Heritability partitioning across qQTL and xQTL annotations, with joint
+modelling to quantify the additional trait heritability explained by
+distributional effects beyond linear QTLs:
+
+<https://statfungen.github.io/xqtl-protocol/code/enrichment/sldsc_enrichment.html>
+
+### TWAS / cTWAS association testing
+
+Applying qTWAS prediction weights (trained in `qQTLR`) to GWAS summary
+statistics to produce gene–trait associations. This is where the actual
+qTWAS association test lives, using the `pecotmr` / cTWAS integration:
+
+<https://statfungen.github.io/xqtl-protocol/code/pecotmr_integration/twas_ctwas.html>
+
+## When to use what
+
+| Task                                                    | Where              |
+|---------------------------------------------------------|--------------------|
+| Interactive qQTL exploration on a single gene / region  | `qQTLR`            |
+| QUAIL vQTL on a single phenotype                        | `qQTLR`            |
+| Heterogeneity (ξ) assessment                            | `qQTLR`            |
+| qTWAS **weight training** at scale                      | `qQTLR`            |
+| Genome-wide qQTL calling with HMT                       | FunGen-xQTL pipeline |
+| EOO / sLDSC enrichment                                  | FunGen-xQTL pipeline |
+| Applying qTWAS weights to GWAS (association test)       | FunGen-xQTL pipeline |
+
+## Citation
+
+When using this software or the associated pipelines, please cite:
+
+> Liu, Jiang, et al. *Distributional genetic effects reveal
+> context-dependent molecular regulation in human brain aging and
+> Alzheimer's disease.* 2026+ (manuscript in preparation,
+> FunGen-xQTL consortium).
+
+## See also
+
+- [Basic qQTL analysis](basic-qqtl-analysis.html)
+- [Interpreting qQTL results](interpreting-qqtl-results.html)
+- [vQTL as a special case of qQTL](vqtl-special-case.html)
+- [iQTL simulation settings](iqtl-simulation.html)
+- [Training qTWAS prediction weights](qtwas-pipeline.html)
