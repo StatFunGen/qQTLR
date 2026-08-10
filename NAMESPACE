@@ -2,7 +2,9 @@
 
 export(QUAIL_pipeline)
 export(QUAIL_rank_score_pipeline)
+export(calculate_khmaladze_heterogeneity)
 export(calculate_xi_correlation)
+export(calculate_xi_correlation_calibrated)
 export(load_quantile_twas_weights)
 export(multicontext_ld_clumping)
 export(perform_qr_analysis)

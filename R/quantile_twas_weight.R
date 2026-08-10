@@ -492,6 +492,223 @@ calculate_xi_correlation <- function(rq_coef_result, tau_range = seq(0.1, 0.9, b
   return(xi_df)
 }
 
+#' Bootstrap-Calibrated p-value for the Xi Correlation Heterogeneity Test
+#'
+#' \code{calculate_xi_correlation}'s asymptotic p-value
+#' (\code{XICOR::xicor(..., method = "asymptotic")}) is badly miscalibrated for this use
+#' case: the tau-grid coefficients \eqn{\hat\beta(\tau)} are all estimated from the SAME n
+#' individuals, so adjacent-tau estimates are highly correlated. Chatterjee's xi is built
+#' for i.i.d. (X,Y) pairs and mistakes this sampling-induced smoothness for genuine
+#' tau-dependence: in simulation under a true null (constant per-allele effect, no real
+#' heterogeneity), the asymptotic p-value rejects at nominal alpha = 0.05 in roughly 87-90\%
+#' of replicates (see \code{manuscript/heter_test_khmaladze/task1_calibrated_xi_bootstrap.R}
+#' for the verification). Naively permuting the tau <-> beta_hat(tau) correspondence does
+#' NOT fix this (still ~87\% false-positive rate) -- permuting labels on one already
+#' correlated, fixed vector never reconstructs a valid null sampling distribution.
+#'
+#' This function instead regenerates the null and refits the FULL quantile regression
+#' process on each bootstrap replicate: (1) fit a null-constrained (median location-shift)
+#' model to get a constant-effect fit and residuals, (2) resample residuals with replacement
+#' and add them back onto the null fitted values (same fixed genotype/covariate design),
+#' (3) refit all tau levels on the synthetic outcome and recompute xi, (4) repeat n_boot
+#' times to build an empirical null distribution specific to this variant's actual sample.
+#'
+#' Because of this refit-based design, calibration CANNOT be computed post-hoc from
+#' already-saved \code{coef_qr_*} columns alone (unlike \code{calculate_xi_correlation}) --
+#' it needs the individual-level \code{X}, \code{Y}, \code{Z}. It is also \code{O(n_boot)}
+#' times more expensive per variant than the asymptotic version, so it should only be
+#' requested for a restricted candidate set (e.g. via \code{keep_variants} upstream), not
+#' genome-wide.
+#'
+#' @param X Genotype matrix, one column per variant, column names = variant_id
+#' @param Y Single-column phenotype matrix/vector
+#' @param Z Covariate matrix (optional)
+#' @param taus Quantile grid (default: the pipeline's 19-point grid)
+#' @param n_boot Number of null-resampling bootstrap replicates (default 199)
+#' @return A data frame with variant_id, xi_obs, xi_pval_asymp (for comparison against the
+#'   uncalibrated version), and xi_pval_calibrated
+#' @export
+calculate_xi_correlation_calibrated <- function(X, Y, Z = NULL,
+                                                  taus = seq(0.05, 0.95, by = 0.05),
+                                                  n_boot = 199) {
+  if (!requireNamespace("XICOR", quietly = TRUE)) {
+    stop("Package 'XICOR' is required for xi correlation calculation. Please install it.")
+  }
+  if (!requireNamespace("quantreg", quietly = TRUE)) {
+    stop("Package 'quantreg' is required for xi correlation calculation. Please install it.")
+  }
+  geno.mat <- as.matrix(X)
+  y_vec <- as.numeric(as.matrix(Y)[, 1])
+  variant_ids <- colnames(geno.mat)
+  z_mat <- if (is.null(Z)) NULL else as.matrix(Z)
+
+  design_for <- function(g_col) if (is.null(z_mat)) cbind(1, g_col) else cbind(1, g_col, z_mat)
+
+  fit_betas_g <- function(g_col, y, taus) {
+    Xd <- design_for(g_col)
+    sapply(taus, function(tt) {
+      mod <- suppressWarnings(quantreg::rq.fit.br(Xd, y, tau = tt))
+      mod$coefficients[2]
+    })
+  }
+
+  message("Computing bootstrap-calibrated xi p-values (n_boot=", n_boot,
+          "); this refits the full ", length(taus),
+          "-tau quantile process n_boot times PER VARIANT -- restrict to a small candidate set.")
+
+  res <- lapply(seq_len(ncol(geno.mat)), function(j) {
+    g_col <- geno.mat[, j]
+    Xd <- design_for(g_col)
+    med_mod <- suppressWarnings(quantreg::rq.fit.br(Xd, y_vec, tau = 0.5))
+    fitted_null <- as.numeric(Xd %*% med_mod$coefficients)
+    resid0 <- y_vec - fitted_null
+
+    betas_obs <- fit_betas_g(g_col, y_vec, taus)
+    obs_fit <- XICOR::xicor(taus, betas_obs, method = "asymptotic", pvalue = TRUE)
+    xi_obs <- obs_fit$xi
+
+    xi_boot <- sapply(seq_len(n_boot), function(b) {
+      y_star <- fitted_null + sample(resid0, length(resid0), replace = TRUE)
+      betas_star <- fit_betas_g(g_col, y_star, taus)
+      XICOR::xicor(taus, betas_star, method = "asymptotic")
+    })
+    c(xi_obs = unname(xi_obs), xi_pval_asymp = unname(obs_fit$pval),
+      xi_pval_calibrated = unname((1 + sum(xi_boot >= xi_obs)) / (1 + n_boot)))
+  })
+
+  res_mat <- do.call(rbind, res)
+  data.frame(variant_id = variant_ids, res_mat, stringsAsFactors = FALSE)
+}
+
+#' KhmaladzeTest Heterogeneity Statistic for Quantile Regression Coefficients
+#'
+#' Tests whether the genotype's quantile regression slope is constant across tau, using
+#' the Khmaladze (1981) martingale-transform test as adapted to quantile regression by
+#' Koenker \& Xiao (2002), via \code{quantreg::KhmaladzeTest()}. In simulation this test is
+#' much better calibrated under a true null than Chatterjee's xi (~5\% rejection at nominal
+#' alpha=0.05 vs. ~87-90\% for xi's asymptotic p-value), with good power against both
+#' monotonic and non-monotonic ("hump") true heterogeneity, and reduced (but non-zero) power
+#' for weak, tail-localized signal (see
+#' \code{xi_calibration_check/xi_calibration_verification.md}, section 8, for the
+#' verification this function's design is based on).
+#'
+#' Unlike \code{calculate_xi_correlation}, this CANNOT be computed from already-fitted
+#' \code{coef_qr_*} columns -- \code{KhmaladzeTest} refits the full quantile regression
+#' PROCESS from individual-level data (\code{rqProcess()} plus an \code{akj()} nonparametric
+#' conditional-density estimate internally), so \code{X}, \code{Y}, \code{Z} must be supplied.
+#'
+#' Handling of covariates \code{Z} (IMPORTANT, changed 2026-08-09 after real-data testing):
+#' when \code{Z} is provided, this function does NOT put it directly into the
+#' \code{KhmaladzeTest} formula. Two reasons: (1) \code{Tn} tests ALL slope parameters
+#' jointly, so a covariate with its own tau-varying effect would make \code{Tn} reject
+#' regardless of whether the genotype term itself is heterogeneous -- the per-slope
+#' statistic \code{THn["G"]} would be needed instead; but (2) on real data with the ~40-50
+#' covariates typical of this pipeline (genotype PCs, hidden factors, Marchenko-corrected
+#' PCs, ...), putting them all directly in the formula makes \code{rqProcess}'s design
+#' matrix rank-deficient at the extreme tau levels -- confirmed on real data
+#' (TMEM106B/chr7:12086129:A:G, ROSMAP Exc DeJager, n=419, 45 covariates): every variant
+#' threw "system is computationally singular". Instead, \code{Z} is partialled out of both
+#' \code{Y} and each genotype column via OLS (Frisch-Waugh-Lovell projection), and
+#' \code{KhmaladzeTest} is then run on the covariate-free residuals \code{Y_resid ~ G_resid}.
+#' With only one predictor left, \code{Tn} and \code{THn} are mathematically identical (and
+#' \code{quantreg::KhmaladzeTest()} in fact returns \code{THn} unnamed in this single-
+#' predictor case, so indexing \code{THn["G"]} would silently give NA -- \code{Tn} is used
+#' directly). This residualization is exact for a constant/mean-shift covariate effect and
+#' only approximate if a covariate itself has a genuinely tau-varying effect (some of that
+#' variation could then leak into the residuals) -- a real, load-bearing caveat that should
+#' be reported alongside any \code{khm_THn_G}/\code{khm_pval_calibrated} computed with
+#' \code{Z} present, not a cosmetic one.
+#'
+#' No exact analytic p-value for \code{THn} was locatable in this environment (the tabulated
+#' critical values from Koenker \& Xiao 2002 were not available); set \code{n_boot > 0} to
+#' obtain an empirical, null-consistent p-value via the same residual-bootstrap-and-refit
+#' principle as \code{calculate_xi_correlation_calibrated}. This is expensive (\code{n_boot}
+#' full \code{KhmaladzeTest} refits per variant, each itself more costly than a plain
+#' \code{rq} fit) -- only enable it for a small candidate set, not genome-wide.
+#'
+#' @param X Genotype matrix, one column per variant, column names = variant_id
+#' @param Y Single-column phenotype matrix/vector
+#' @param Z Covariate matrix (optional)
+#' @param taus Quantile grid (default: the pipeline's 19-point grid)
+#' @param n_boot Number of null-resampling bootstrap replicates for an empirical p-value per
+#'   variant (default 0 = skip, return only the Tn/THn_G statistics)
+#' @return A data frame with variant_id, khm_Tn (joint statistic, for reference only),
+#'   khm_THn_G (genotype-specific statistic -- use this one), and khm_pval_calibrated
+#'   (only if n_boot > 0)
+#' @export
+calculate_khmaladze_heterogeneity <- function(X, Y, Z = NULL,
+                                               taus = seq(0.05, 0.95, by = 0.05),
+                                               n_boot = 0) {
+  if (!requireNamespace("quantreg", quietly = TRUE)) {
+    stop("Package 'quantreg' is required for the KhmaladzeTest heterogeneity test. Please install it.")
+  }
+  geno.mat <- as.matrix(X)
+  y_vec <- as.numeric(as.matrix(Y)[, 1])
+  variant_ids <- colnames(geno.mat)
+  z_mat <- if (is.null(Z)) NULL else as.matrix(Z)
+
+  # quantreg::KhmaladzeTest() refits the full quantile-regression PROCESS (rqProcess() plus
+  # an akj() conditional-density estimate) at EVERY tau, including the extreme ones
+  # (tau=0.05/0.95, effectively ~5% of n observations driving that tail). Real covariate
+  # sets from this pipeline commonly have ~40-50 columns (genotype PCs, hidden expression
+  # factors, Marchenko-corrected PCs, ...); putting all of them directly into the
+  # KhmaladzeTest formula makes the design matrix rank-deficient at these extreme tails.
+  # Confirmed on real data (TMEM106B/chr7:12086129:A:G, ROSMAP Exc DeJager, n=419, 45
+  # covariates): the direct `Y ~ G + Z1 + ... + Z45` formula throws "system is
+  # computationally singular" for every variant tested (verified interactively, 2026-08-09).
+  #
+  # Fix: partial Z out of Y and G via OLS first (Frisch-Waugh-Lovell projection), then run
+  # KhmaladzeTest on the covariate-free residuals Y_resid ~ G_resid. This is exact for a
+  # constant (mean-shift) covariate effect and only approximate if a covariate itself has a
+  # tau-varying effect (in which case some of that variation could leak into the residuals) --
+  # it is a real, load-bearing caveat, not a cosmetic one, and should be reported alongside
+  # any khm_THn_G / khm_pval_calibrated result computed with Z present.
+  residualize <- function(v) if (is.null(z_mat)) v else stats::residuals(stats::lm(v ~ z_mat))
+
+  # After residualizing Z out, the formula below has exactly ONE slope (G), so the joint
+  # statistic Tn and the per-slope statistic THn are mathematically identical here -- the
+  # Tn-vs-THn["G"] distinction only matters when covariates remain IN the formula (which,
+  # by design, they no longer are). Note also that quantreg::KhmaladzeTest() drops the name
+  # attribute on THn when there is a single predictor (returns a bare unnamed scalar), so
+  # THn["G"] would silently return NA here -- use Tn directly instead.
+  fit_one_resid <- function(y_resid, g_resid) {
+    df <- data.frame(Y = y_resid, G = g_resid)
+    T <- tryCatch(quantreg::KhmaladzeTest(Y ~ G, data = df, taus = taus, nullH = "location"),
+                  error = function(e) NULL)
+    if (is.null(T)) return(c(Tn = NA_real_, THn_G = NA_real_))
+    c(Tn = unname(T$Tn), THn_G = unname(T$Tn))
+  }
+
+  y_resid <- residualize(y_vec)
+  khm_stats <- t(sapply(seq_len(ncol(geno.mat)), function(j) {
+    fit_one_resid(y_resid, residualize(geno.mat[, j]))
+  }))
+  out <- data.frame(variant_id = variant_ids,
+                     khm_Tn = khm_stats[, "Tn"],
+                     khm_THn_G = khm_stats[, "THn_G"],
+                     stringsAsFactors = FALSE)
+
+  if (n_boot > 0) {
+    message("Computing bootstrap-calibrated KhmaladzeTest p-values (n_boot=", n_boot,
+            "); this refits the full quantile process n_boot times PER VARIANT -- restrict to a small candidate set.")
+    out$khm_pval_calibrated <- sapply(seq_len(ncol(geno.mat)), function(j) {
+      obs_THn <- out$khm_THn_G[j]
+      if (is.na(obs_THn)) return(NA_real_)
+      g_resid <- residualize(geno.mat[, j])
+      # null-constrained (median location-shift) model on the residualized, covariate-free pair
+      med_mod <- suppressWarnings(quantreg::rq.fit.br(cbind(1, g_resid), y_resid, tau = 0.5))
+      fitted_null <- as.numeric(cbind(1, g_resid) %*% med_mod$coefficients)
+      resid0 <- y_resid - fitted_null
+      boot_THn <- sapply(seq_len(n_boot), function(b) {
+        y_star <- fitted_null + sample(resid0, length(resid0), replace = TRUE)
+        fit_one_resid(y_star, g_resid)["THn_G"]
+      })
+      (1 + sum(boot_THn >= obs_THn, na.rm = TRUE)) / (1 + sum(!is.na(boot_THn)))
+    })
+  }
+  out
+}
+
 #' Quantile TWAS Weight Pipeline
 #'
 #' @param X Matrix of genotypes
@@ -539,6 +756,8 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
                                           screen_method = "qvalue",
                                           screen_threshold = 0.05,
                                           xi_tau_range = seq(0.1, 0.9, by = 0.05),
+                                          heterogeneity_methods = c("xi"),
+                                          heterogeneity_n_boot = 199,
                                           keep_variants = NULL,
                                           marginal_beta_calculate = TRUE,
                                           twas_weight_calculate = TRUE,
@@ -667,6 +886,34 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
     results$rq_coef_df <- rq_coef_result
     results$beta_heterogeneity <- beta_heterogeneity
     results$xi_correlation <- xi_correlation
+
+    # Step 5-3 (optional): bootstrap-calibrated xi and/or KhmaladzeTest heterogeneity tests.
+    # Both need individual-level X_for_qr/Y/Z (not just the saved coef_qr_* columns) and are
+    # much more expensive than Step 5-2 -- only requested when heterogeneity_methods asks for
+    # them, which should be paired with keep_variants restricted to a small candidate set.
+    if ("xi_calibrated" %in% heterogeneity_methods) {
+      message("Calculating bootstrap-calibrated xi correlation for QR coefficients...")
+      xi_calibrated <- calculate_xi_correlation_calibrated(
+        X = X_for_qr, Y = Y, Z = Z, taus = quantile_qtl_tau_list, n_boot = heterogeneity_n_boot
+      )
+      rq_coef_result <- rq_coef_result %>%
+        dplyr::left_join(xi_calibrated, by = "variant_id")
+      results$rq_coef_df <- rq_coef_result
+      results$xi_calibrated <- xi_calibrated
+      message("Bootstrap-calibrated xi correlation completed.")
+    }
+
+    if ("khmaladze" %in% heterogeneity_methods) {
+      message("Calculating KhmaladzeTest heterogeneity statistics...")
+      khmaladze_result <- calculate_khmaladze_heterogeneity(
+        X = X_for_qr, Y = Y, Z = Z, taus = quantile_qtl_tau_list, n_boot = heterogeneity_n_boot
+      )
+      rq_coef_result <- rq_coef_result %>%
+        dplyr::left_join(khmaladze_result, by = "variant_id")
+      results$rq_coef_df <- rq_coef_result
+      results$khmaladze_result <- khmaladze_result
+      message("KhmaladzeTest heterogeneity calculation completed.")
+    }
   } else {
     message("Skipping marginal beta calculation and heterogeneity analysis.")
   }
