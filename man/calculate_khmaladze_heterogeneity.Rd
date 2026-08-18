@@ -9,7 +9,8 @@ calculate_khmaladze_heterogeneity(
   Y,
   Z = NULL,
   taus = seq(0.05, 0.95, by = 0.05),
-  n_boot = 0
+  n_boot = 0,
+  se = "ker"
 )
 }
 \arguments{
@@ -23,6 +24,10 @@ calculate_khmaladze_heterogeneity(
 
 \item{n_boot}{Number of null-resampling bootstrap replicates for an empirical p-value per
 variant (default 0 = skip, return only the Tn/THn_G statistics)}
+
+\item{se}{Sparsity/density estimator passed to \code{KhmaladzeTest} (default \code{"ker"};
+quantreg's default \code{"nid"} is prone to "computationally singular" errors with many
+covariates and somewhat worse Type-I-error control at low MAF -- see Details)}
 }
 \value{
 A data frame with variant_id, khm_Tn (joint statistic, for reference only),
@@ -46,32 +51,44 @@ Unlike \code{calculate_xi_correlation}, this CANNOT be computed from already-fit
 PROCESS from individual-level data (\code{rqProcess()} plus an \code{akj()} nonparametric
 conditional-density estimate internally), so \code{X}, \code{Y}, \code{Z} must be supplied.
 
-Handling of covariates \code{Z} (IMPORTANT, changed 2026-08-09 after real-data testing):
-when \code{Z} is provided, this function does NOT put it directly into the
-\code{KhmaladzeTest} formula. Two reasons: (1) \code{Tn} tests ALL slope parameters
-jointly, so a covariate with its own tau-varying effect would make \code{Tn} reject
-regardless of whether the genotype term itself is heterogeneous -- the per-slope
-statistic \code{THn["G"]} would be needed instead; but (2) on real data with the ~40-50
-covariates typical of this pipeline (genotype PCs, hidden factors, Marchenko-corrected
-PCs, ...), putting them all directly in the formula makes \code{rqProcess}'s design
-matrix rank-deficient at the extreme tau levels -- confirmed on real data
-(TMEM106B/chr7:12086129:A:G, ROSMAP Exc DeJager, n=419, 45 covariates): every variant
-threw "system is computationally singular". Instead, \code{Z} is partialled out of both
-\code{Y} and each genotype column via OLS (Frisch-Waugh-Lovell projection), and
-\code{KhmaladzeTest} is then run on the covariate-free residuals \code{Y_resid ~ G_resid}.
-With only one predictor left, \code{Tn} and \code{THn} are mathematically identical (and
-\code{quantreg::KhmaladzeTest()} in fact returns \code{THn} unnamed in this single-
-predictor case, so indexing \code{THn["G"]} would silently give NA -- \code{Tn} is used
-directly). This residualization is exact for a constant/mean-shift covariate effect and
-only approximate if a covariate itself has a genuinely tau-varying effect (some of that
-variation could then leak into the residuals) -- a real, load-bearing caveat that should
-be reported alongside any \code{khm_THn_G}/\code{khm_pval_calibrated} computed with
-\code{Z} present, not a cosmetic one.
+Handling of covariates \code{Z} (revised 2026-08-10, credit Roulan Jiang for the
+diagnosis): \code{Z} is now put DIRECTLY into the \code{KhmaladzeTest} formula
+(\code{Y ~ G + Z1 + ... + Zp}), matching \code{calculate_xi_correlation_calibrated}'s
+design instead of diverging from it. An earlier version of this function partialled
+\code{Z} out of \code{Y} and \code{G} via OLS first (Frisch-Waugh-Lovell) because the
+direct formula threw "system is computationally singular" on real data (~40-90
+covariates) -- but that turned out to be caused by \code{summary.rq}'s default sparsity
+estimator (\code{se="nid"}, which \code{KhmaladzeTest}'s \code{...} passes through),
+not by the covariate count itself. Passing \code{se="ker"} instead avoids the crash
+entirely (confirmed on TMEM106B/chr7:12086129:A:G, ROSMAP Exc_mega, n=737, 65
+covariates: \code{se="nid"} still throws the singular error, \code{se="ker"} returns
+\code{Tn=58.3} cleanly) and also reduces MAF-driven Type-I-error inflation under a true
+null (MAF=0.05: ~10\% down to ~6\% at nominal alpha=0.05 in simulation, vs. \code{"nid"}'s
+~15\%). \code{se="ker"} is now the default here (can be overridden via \code{...}).
+
+Because \code{Z} is back in the formula, \code{Tn} (joint, all slopes) and \code{THn}
+(named per-slope vector) are no longer numerically identical -- use \code{THn["G"]}
+(returned as \code{khm_THn_G}), NOT \code{Tn}, exactly as originally documented: \code{Tn}
+would reject whenever ANY covariate has its own tau-varying effect, regardless of whether
+the genotype term itself is heterogeneous.
 
 No exact analytic p-value for \code{THn} was locatable in this environment (the tabulated
 critical values from Koenker \& Xiao 2002 were not available); set \code{n_boot > 0} to
 obtain an empirical, null-consistent p-value via the same residual-bootstrap-and-refit
-principle as \code{calculate_xi_correlation_calibrated}. This is expensive (\code{n_boot}
-full \code{KhmaladzeTest} refits per variant, each itself more costly than a plain
-\code{rq} fit) -- only enable it for a small candidate set, not genome-wide.
+principle as \code{calculate_xi_correlation_calibrated} -- the null-generation logic is now
+IDENTICAL between the two functions (fit a median/location-shift model on the FULL design
+including \code{Z}, resample residuals onto the same fixed G/Z, refit all tau, recompute
+the statistic), differing only in which statistic (xi vs. THn["G"]) is recomputed each
+replicate. This is expensive (\code{n_boot} full \code{KhmaladzeTest} refits per variant,
+each itself more costly than a plain \code{rq} fit) -- only enable it for a small
+candidate set, not genome-wide.
+
+KNOWN OPEN LIMITATION (raised by Roulan Jiang, unresolved as of 2026-08-10): the
+null-generating model for the bootstrap treats \code{Z}'s coefficients as FIXED at
+their median-regression values, i.e. it assumes \code{Z} itself has no tau-varying
+effect either. If a covariate genuinely does have a tau-varying effect, the synthetic
+null data does not reflect that, and it is not yet established whether this biases
+\code{khm_pval_calibrated} (or \code{xi_pval_calibrated}) upward or downward. Roulan is
+investigating an alternative (Chernozhukov \& Fernandez-Val 2005 subsampling inference
+for the QR process) that may not share this assumption; not yet implemented here.
 }

@@ -3,6 +3,8 @@
 export(QUAIL_pipeline)
 export(QUAIL_rank_score_pipeline)
 export(calculate_khmaladze_heterogeneity)
+export(calculate_subsampling_heterogeneity)
+export(calculate_wald_heterogeneity)
 export(calculate_xi_correlation)
 export(calculate_xi_correlation_calibrated)
 export(load_quantile_twas_weights)
