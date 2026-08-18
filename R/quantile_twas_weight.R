@@ -958,7 +958,7 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
                                           screen_method = "qvalue",
                                           screen_threshold = 0.05,
                                           xi_tau_range = seq(0.1, 0.9, by = 0.05),
-                                          heterogeneity_methods = c("xi"),
+                                          heterogeneity_methods = c("wald"),
                                           heterogeneity_n_boot = 199,
                                           keep_variants = NULL,
                                           marginal_beta_calculate = TRUE,
