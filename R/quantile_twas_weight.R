@@ -1076,18 +1076,23 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
     beta_heterogeneity <- calculate_coef_heterogeneity(rq_coef_result)
     message("Beta heterogeneity calculation completed.")
 
-    # Step 5-2: Calculate xi correlation (Chatterjee correlation test)
-    message("Calculating xi correlation for QR coefficients...")
-    xi_correlation <- calculate_xi_correlation(rq_coef_result, tau_range = xi_tau_range, min_valid = 10)
-    message("Xi correlation calculation completed.")
+    results$beta_heterogeneity <- beta_heterogeneity
 
-    # Merge xi and xi_pval into rq_coef_result (using left_join to preserve row order)
-    rq_coef_result <- rq_coef_result %>%
-      dplyr::left_join(xi_correlation, by = "variant_id")
+    # Step 5-2 (optional): Calculate xi correlation (Chatterjee correlation test). Only run when
+    # "xi" is requested in heterogeneity_methods -- e.g. skipped by default now that "wald" is
+    # the default heterogeneity test and doesn't need it.
+    if ("xi" %in% heterogeneity_methods) {
+      message("Calculating xi correlation for QR coefficients...")
+      xi_correlation <- calculate_xi_correlation(rq_coef_result, tau_range = xi_tau_range, min_valid = 10)
+      message("Xi correlation calculation completed.")
+
+      # Merge xi and xi_pval into rq_coef_result (using left_join to preserve row order)
+      rq_coef_result <- rq_coef_result %>%
+        dplyr::left_join(xi_correlation, by = "variant_id")
+      results$xi_correlation <- xi_correlation
+    }
 
     results$rq_coef_df <- rq_coef_result
-    results$beta_heterogeneity <- beta_heterogeneity
-    results$xi_correlation <- xi_correlation
 
     # Step 5-3 (optional): bootstrap-calibrated xi and/or KhmaladzeTest heterogeneity tests.
     # Both need individual-level X_for_qr/Y/Z (not just the saved coef_qr_* columns) and are
