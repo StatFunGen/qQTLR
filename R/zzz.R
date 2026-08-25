@@ -8,6 +8,7 @@ parse_variant_id             <- NULL
 filter_variants_by_ld_reference <- NULL
 ld_prune_by_correlation      <- NULL
 ld_clump_by_score            <- NULL
+harmonize_twas               <- NULL
 
 .onLoad <- function(libname, pkgname) {
   ns_self <- asNamespace(pkgname)
@@ -45,6 +46,10 @@ ld_clump_by_score            <- NULL
   # ld_clump_by_score: renamed to ldClumpByScore.
   bind_from_pecotmr("ldClumpByScore", "ld_clump_by_score",
     "'ldClumpByScore' is not available in the installed version of pecotmr")
+
+  # harmonize_twas: renamed to harmonizeTwas.
+  bind_from_pecotmr("harmonizeTwas", "harmonize_twas",
+    "'harmonizeTwas' is not available in the installed version of pecotmr")
 
   # compute_qvalues: q-value estimation via qvalue package, with FDR fallback.
   assign("compute_qvalues", function(pvals) {
