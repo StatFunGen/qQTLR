@@ -344,7 +344,7 @@ calculate_qr_and_pseudo_R2 <- function(AssocData, tau.list, strategy = c("correl
   }
   strategy <- match.arg(strategy)
   # Check and handle problematic columns affecting the full rank of the design matrix
-  AssocData$X.filter <- enforce_design_full_rank(X = AssocData$X.filter, C = AssocData$C, strategy = strategy, response = AssocData$Y, corr_thresholds = corr_thresholds)
+  AssocData$X.filter <- pecotmr:::enforceDesignFullRank(X = AssocData$X.filter, C = AssocData$C, strategy = strategy, response = AssocData$Y, corr_thresholds = corr_thresholds)
   snp_names <- colnames(AssocData$X.filter)
   # Build the cleaned design matrix using the filtered X and unnamed C
 
