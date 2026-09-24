@@ -738,27 +738,63 @@ calculate_khmaladze_heterogeneity <- function(X, Y, Z = NULL,
 #' (\code{"G"}), not by position -- indexing by position (e.g. \code{table$pvalue[1]}) is
 #' only safe if the genotype term is guaranteed to be the first slope in the formula.
 #'
+#' When \code{trend_methods} is specified, trend Wald tests are computed from the same
+#' \code{rq} fit. Each test projects the coefficient trajectory onto a pre-specified
+#' direction and tests whether the projection deviates from zero using a pseudo-F statistic.
+#' Available directions: \code{"qnorm"} (location shift), \code{"u_shape"} (variance),
+#' \code{"upper"} (upper-tail shift), \code{"lower"} (lower-tail shift),
+#' \code{"legendre_p3"} (S-shape), \code{"lehmann"} (proportional hazards),
+#' \code{"inverse_lehmann"} (inverse proportional hazards).
+#'
 #' @param X Genotype matrix, one column per variant, column names = variant_id
 #' @param Y Single-column phenotype matrix/vector
-#' @param Z Covariate matrix (optional) -- included directly in the \code{rq} formula (no
-#'   Frisch-Waugh-Lovell residualization needed; confirmed not to crash on real data with
-#'   ~90 covariates, n=737, unlike the earlier issue found with \code{KhmaladzeTest})
-#' @param taus Quantile grid (default: the pipeline's 19-point grid)
-#' @param se Sparsity/density estimator passed to \code{anova.rq} (default \code{"ker"})
-#' @return A data frame with variant_id, wald_Tn (test statistic), wald_ndf/wald_ddf
-#'   (numerator/denominator degrees of freedom), and wald_pval
+#' @param Z Covariate matrix (optional)
+#' @param taus Quantile grid for heterogeneity tests (default: 17-point grid \code{seq(0.10, 0.90, by=0.05)})
+#' @param se Sparsity/density estimator passed to \code{anova.rq} and
+#'   \code{summary.rq} (default \code{"ker"})
+#' @param do_wald Logical. If \code{TRUE}, compute the omnibus Wald heterogeneity
+#'   test (\code{wald_Tn}, \code{wald_ndf}, \code{wald_ddf}, \code{wald_pval}).
+#'   Default \code{FALSE}.
+#' @param trend_methods Character vector of trend directions to test using the same
+#'   \code{rq} fit. Any subset of \code{c("qnorm", "u_shape", "upper", "lower",
+#'   "legendre_p3", "lehmann", "inverse_lehmann")}. \code{NULL} (default) skips
+#'   trend tests.
+#' @param trend_cauchy Logical. If \code{TRUE}, appends a Cauchy combination p-value
+#'   (\code{twald_cauchy_pval}) across all \code{trend_methods}. Default \code{FALSE}.
+#' @return A data frame with \code{variant_id}, optionally \code{wald_Tn},
+#'   \code{wald_ndf}, \code{wald_ddf}, \code{wald_pval} (when \code{do_wald = TRUE}),
+#'   and optionally \code{twald_<method>_stat} and \code{twald_<method>_pval} for
+#'   each requested trend method, plus \code{twald_cauchy_pval} when
+#'   \code{trend_cauchy = TRUE}.
 #' @export
 calculate_wald_heterogeneity <- function(X, Y, Z = NULL,
-                                          taus = seq(0.05, 0.95, by = 0.05),
-                                          se = "ker") {
+                                          taus = seq(0.10, 0.90, by = 0.05),
+                                          se = "ker",
+                                          do_wald = FALSE,
+                                          trend_methods = c("qnorm", "u_shape", "upper", "lower",
+                                                            "legendre_p3", "lehmann", "inverse_lehmann"),
+                                          trend_cauchy = TRUE) {
   if (!requireNamespace("quantreg", quietly = TRUE)) {
     stop("Package 'quantreg' is required for the Wald heterogeneity test. Please install it.")
   }
+
+  ALL_TREND <- c("qnorm", "u_shape", "upper", "lower",
+                 "legendre_p3", "lehmann", "inverse_lehmann")
+  if (!is.null(trend_methods))
+    trend_methods <- match.arg(trend_methods, ALL_TREND, several.ok = TRUE)
+  do_trend <- length(trend_methods) > 0L
+  if (any(!is.finite(taus) | taus <= 0 | taus >= 1))
+    stop("taus must be finite and strictly between 0 and 1.")
+
   geno.mat <- as.matrix(X)
   y_vec <- as.numeric(as.matrix(Y)[, 1])
   variant_ids <- colnames(geno.mat)
+  if (is.null(variant_ids)) variant_ids <- paste0("V", seq_len(ncol(geno.mat)))
   z_mat <- if (is.null(Z)) NULL else as.matrix(Z)
   if (!is.null(z_mat)) colnames(z_mat) <- paste0("Zcov", seq_len(ncol(z_mat)))
+  n <- length(y_vec)
+  K <- length(taus)
+  if (do_trend && K < 2L) stop("taus must have at least 2 elements for trend tests.")
 
   wald_formula <- if (is.null(z_mat)) {
     Y ~ G
@@ -766,20 +802,112 @@ calculate_wald_heterogeneity <- function(X, Y, Z = NULL,
     stats::as.formula(paste("Y ~ G +", paste(colnames(z_mat), collapse = " + ")))
   }
 
-  res <- t(sapply(seq_len(ncol(geno.mat)), function(j) {
+  if (do_trend) {
+    trend_fns <- list(
+      qnorm           = function(u) qnorm(u),
+      u_shape         = function(u) qnorm(u)^2 - 1,
+      upper           = function(u) pmax(u - 0.5, 0),
+      lower           = function(u) pmax(0.5 - u, 0),
+      legendre_p3     = function(u) (5 * (2 * u - 1)^3 - 3 * (2 * u - 1)) / 2,
+      lehmann         = function(u) -log1p(-u) - 1,
+      inverse_lehmann = function(u) log(u) + 1
+    )
+
+    trend_g <- lapply(trend_methods, function(m) trend_fns[[m]](taus))
+    names(trend_g) <- trend_methods
+
+    cauchy_combine <- function(pvals) {
+      pvals <- pvals[!is.na(pvals) & is.finite(pvals) & pvals >= 0 & pvals <= 1]
+      if (!length(pvals)) return(NA_real_)
+      if (any(pvals == 0)) return(0)
+      if (any(pvals == 1)) return(1)
+      max(0.5 - atan(mean(tan((0.5 - pvals) * pi))) / pi, .Machine$double.eps)
+    }
+
+    trend_wald_one <- function(beta, Sigma, g, n, K) {
+      centered <- g - mean(g)
+      if (max(abs(centered)) < .Machine$double.eps) return(NULL)
+      centered <- centered / max(abs(centered))
+      S <- tryCatch(solve(Sigma, cbind(one = rep(1, K), trend = centered)),
+                    error = function(e) NULL)
+      if (is.null(S)) return(NULL)
+      contrast <- S[, "trend"] - S[, "one"] * sum(S[, "trend"]) / sum(S[, "one"])
+      contrast  <- contrast / max(abs(contrast))
+      variance  <- as.numeric(crossprod(contrast, Sigma %*% contrast))
+      if (!is.finite(variance) || variance <= 0) return(NULL)
+      W <- sum(contrast * (beta - mean(beta)))^2 / variance
+      list(stat = W, pval = stats::pf(W, 1L, n * K - 1L, lower.tail = FALSE))
+    }
+  }
+
+  res_list <- lapply(seq_len(ncol(geno.mat)), function(j) {
     df <- data.frame(Y = y_vec, G = geno.mat[, j])
     if (!is.null(z_mat)) df <- cbind(df, as.data.frame(z_mat))
-    fit <- tryCatch(suppressWarnings(quantreg::rq(wald_formula, data = df, tau = taus)),
-                     error = function(e) NULL)
-    a <- if (is.null(fit)) NULL else tryCatch(suppressWarnings(stats::anova(fit, joint = FALSE, se = se)),
-                                                error = function(e) NULL)
-    if (is.null(a)) return(c(Tn = NA_real_, ndf = NA_real_, ddf = NA_real_, pval = NA_real_))
-    c(Tn = a$table["G", "Tn"], ndf = a$table["G", "ndf"], ddf = a$table["G", "ddf"], pval = a$table["G", "pvalue"])
-  }))
 
-  data.frame(variant_id = variant_ids,
-             wald_Tn = res[, "Tn"], wald_ndf = res[, "ndf"], wald_ddf = res[, "ddf"],
-             wald_pval = res[, "pval"], stringsAsFactors = FALSE)
+    fit <- tryCatch(suppressWarnings(quantreg::rq(wald_formula, data = df, tau = taus)),
+                    error = function(e) NULL)
+
+    row <- data.frame(row.names = 1L)
+    if (do_wald) {
+      a <- if (is.null(fit)) NULL else
+        tryCatch(suppressWarnings(stats::anova(fit, joint = FALSE, se = se)),
+                 error = function(e) NULL)
+      if (is.null(a)) {
+        row$wald_Tn <- NA_real_; row$wald_ndf <- NA_real_
+        row$wald_ddf <- NA_real_; row$wald_pval <- NA_real_
+      } else {
+        row$wald_Tn  <- a$table["G", "Tn"];  row$wald_ndf <- a$table["G", "ndf"]
+        row$wald_ddf <- a$table["G", "ddf"]; row$wald_pval <- a$table["G", "pvalue"]
+      }
+    }
+
+    if (do_trend && !is.null(fit)) {
+      cf        <- coef(fit)
+      beta_g    <- cf["G", ]
+      p_coef    <- nrow(cf)
+      target_idx <- match("G", rownames(cf))
+
+      base_obj <- fit; class(base_obj) <- "rq"
+      objs <- rep(list(base_obj), K)
+      for (i in seq_len(K)) {
+        objs[[i]]$coefficients <- fit$coefficients[, i]
+        objs[[i]]$tau          <- fit$tau[[i]]
+        objs[[i]]$rho          <- fit$rho[[i]]
+      }
+      sums <- lapply(objs, function(x)
+        tryCatch(summary(x, se = se, covariance = TRUE), error = function(e) NULL))
+
+      Sigma <- tryCatch({
+        if (any(vapply(sums, function(x) is.null(x) || is.null(x$Hinv) || is.null(x$J),
+                       logical(1L)))) stop("summary failed")
+        J_mat  <- sums[[1L]]$J
+        H_arr  <- array(unlist(lapply(sums, `[[`, "Hinv")), dim = c(p_coef, p_coef, K))
+        H_mat  <- matrix(aperm(H_arr, c(1L, 3L, 2L)), nrow = p_coef * K, ncol = p_coef) %*%
+                  t(chol(J_mat))
+        omega  <- outer(taus, taus, pmin) - outer(taus, taus)
+        jcov   <- (H_mat %*% t(H_mat)) * kronecker(omega, matrix(1, p_coef, p_coef))
+        tpos   <- target_idx + (seq_len(K) - 1L) * p_coef
+        S      <- jcov[tpos, tpos, drop = FALSE]
+        (S + t(S)) / 2
+      }, error = function(e) NULL)
+
+      pvals <- setNames(rep(NA_real_, length(trend_methods)), trend_methods)
+      for (m in trend_methods) {
+        tw <- if (!is.null(Sigma))
+          tryCatch(trend_wald_one(beta_g, Sigma, trend_g[[m]], n, K), error = function(e) NULL)
+        else NULL
+        row[[paste0("twald_", m, "_stat")]] <- if (is.null(tw)) NA_real_ else tw$stat
+        row[[paste0("twald_", m, "_pval")]] <- if (is.null(tw)) NA_real_ else tw$pval
+        if (!is.null(tw)) pvals[[m]] <- tw$pval
+      }
+      if (trend_cauchy) row[["twald_cauchy_pval"]] <- cauchy_combine(pvals)
+    }
+
+    row
+  })
+
+  cbind(data.frame(variant_id = variant_ids, stringsAsFactors = FALSE),
+        dplyr::bind_rows(res_list))
 }
 
 #' Subsampling Test for Equality of Quantile Regression Slopes Across Tau
@@ -958,7 +1086,11 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
                                           screen_method = "qvalue",
                                           screen_threshold = 0.05,
                                           xi_tau_range = seq(0.1, 0.9, by = 0.05),
-                                          heterogeneity_methods = c("wald"),
+                                          heterogeneity_methods = c("trend_wald_qnorm", "trend_wald_u_shape",
+                                                                    "trend_wald_upper", "trend_wald_lower",
+                                                                    "trend_wald_legendre_p3", "trend_wald_lehmann",
+                                                                    "trend_wald_inverse_lehmann", "trend_wald_cauchy"),
+                                          heterogeneity_tau_list = seq(0.10, 0.90, by = 0.05),
                                           heterogeneity_n_boot = 199,
                                           keep_variants = NULL,
                                           marginal_beta_calculate = TRUE,
@@ -1122,10 +1254,20 @@ quantile_twas_weight_pipeline <- function(X, Y, Z = NULL, maf = NULL, region_id 
       message("KhmaladzeTest heterogeneity calculation completed.")
     }
 
-    if ("wald" %in% heterogeneity_methods) {
+    trend_in_methods    <- grep("^trend_wald_", heterogeneity_methods, value = TRUE)
+    trend_methods_clean <- sub("^trend_wald_", "", setdiff(trend_in_methods, "trend_wald_cauchy"))
+    trend_cauchy_flag   <- "trend_wald_cauchy" %in% heterogeneity_methods
+
+    if (trend_cauchy_flag && length(trend_methods_clean) == 0L)
+      message("'trend_wald_cauchy' requested but no trend directions selected; cauchy step will be skipped.")
+
+    if ("wald" %in% heterogeneity_methods || length(trend_methods_clean) > 0L) {
       message("Calculating Wald heterogeneity statistics...")
       wald_result <- calculate_wald_heterogeneity(
-        X = X_for_qr, Y = Y, Z = Z, taus = quantile_qtl_tau_list
+        X = X_for_qr, Y = Y, Z = Z, taus = heterogeneity_tau_list,
+        do_wald       = "wald" %in% heterogeneity_methods,
+        trend_methods = if (length(trend_methods_clean) > 0L) trend_methods_clean else NULL,
+        trend_cauchy  = trend_cauchy_flag
       )
       rq_coef_result <- rq_coef_result %>%
         dplyr::left_join(wald_result, by = "variant_id")
