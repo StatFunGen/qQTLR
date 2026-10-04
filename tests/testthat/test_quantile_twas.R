@@ -299,6 +299,192 @@ test_that("calculate_xi_correlation handles error in xicor gracefully", {
 })
 
 # ===========================================================================
+# calculate_xi_correlation_calibrated / calculate_khmaladze_heterogeneity
+#
+# calculate_xi_correlation's asymptotic p-value above is known to be badly
+# miscalibrated for this pipeline's actual use case (see manuscript/
+# heter_test_khmaladze/task1_calibrated_xi_bootstrap.R): under a true null it
+# rejects at nominal alpha=0.05 in ~87-90% of replicates. These two functions
+# fix that by refitting the full quantile process on individual-level data
+# rather than operating on already-saved coef_qr_* columns, so they need
+# X/Y/Z, not a data.frame of coefficients.
+# ===========================================================================
+
+make_het_geno <- function(n = 300, seed = 1) {
+  set.seed(seed)
+  matrix(rbinom(n, 2, 0.3), ncol = 1, dimnames = list(NULL, "chr1:100:A:G"))
+}
+
+test_that("calculate_xi_correlation_calibrated returns obs/asymp/calibrated columns", {
+  skip_if_not_installed("XICOR"); skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_xi_correlation_calibrated(G, Y, n_boot = 19)
+  expect_equal(nrow(result), 1)
+  expect_true(all(c("xi_obs", "xi_pval_asymp", "xi_pval_calibrated") %in% colnames(result)))
+  expect_true(result$xi_pval_calibrated >= 0 && result$xi_pval_calibrated <= 1)
+})
+
+test_that("calculate_xi_correlation_calibrated accepts covariates Z", {
+  skip_if_not_installed("XICOR"); skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Z <- matrix(rnorm(n * 2), ncol = 2)
+  Y <- matrix(0.6 * G[, 1] + 0.3 * Z[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_xi_correlation_calibrated(G, Y, Z, n_boot = 19)
+  expect_equal(nrow(result), 1)
+  expect_false(is.na(result$xi_pval_calibrated))
+})
+
+test_that("calculate_xi_correlation_calibrated handles multiple variants", {
+  skip_if_not_installed("XICOR"); skip_if_not_installed("quantreg")
+  n <- 300
+  set.seed(2)
+  G <- matrix(rbinom(n * 2, 2, 0.3), ncol = 2,
+              dimnames = list(NULL, c("chr1:100:A:G", "chr1:200:A:G")))
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_xi_correlation_calibrated(G, Y, n_boot = 9)
+  expect_equal(nrow(result), 2)
+  expect_equal(result$variant_id, colnames(G))
+})
+
+test_that("calculate_khmaladze_heterogeneity returns Tn/THn_G with Tn==THn_G (single predictor)", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_khmaladze_heterogeneity(G, Y)
+  expect_equal(nrow(result), 1)
+  expect_true(all(c("khm_Tn", "khm_THn_G") %in% colnames(result)))
+  # after residualization there is exactly one predictor left, so Tn and
+  # THn_G must be numerically identical -- this guards against the earlier
+  # bug where THn["G"] silently returned NA because quantreg drops the name
+  # attribute on THn when there is a single predictor
+  expect_equal(result$khm_Tn, result$khm_THn_G)
+  expect_false(is.na(result$khm_THn_G))
+})
+
+test_that("calculate_khmaladze_heterogeneity with covariates does not crash, Tn != THn_G", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Z <- matrix(rnorm(n * 3), ncol = 3)
+  Y <- matrix(0.6 * G[, 1] + 0.4 * Z[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_khmaladze_heterogeneity(G, Y, Z)
+  expect_equal(nrow(result), 1)
+  expect_false(is.na(result$khm_THn_G))
+  # covariates are back in the KhmaladzeTest formula directly (se="ker" avoids the
+  # singular-matrix crash that motivated the earlier FWL-residualization workaround), so
+  # Tn (joint, all slopes) and THn_G (genotype-specific) are expected to DIFFER now --
+  # only equal in the no-covariate, single-predictor case (see the test above)
+  expect_false(isTRUE(all.equal(result$khm_Tn, result$khm_THn_G)))
+})
+
+test_that("calculate_khmaladze_heterogeneity n_boot>0 returns a calibrated p-value in [0,1]", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Y <- matrix(0.6 * G[, 1] + rnorm(n, 0, 1 + 0.5 * G[, 1]), ncol = 1)
+  result <- calculate_khmaladze_heterogeneity(G, Y, n_boot = 19)
+  expect_true("khm_pval_calibrated" %in% colnames(result))
+  expect_true(result$khm_pval_calibrated >= 0 && result$khm_pval_calibrated <= 1)
+})
+
+# ===========================================================================
+# calculate_wald_heterogeneity
+#
+# Tests H0: beta(tau_1) = ... = beta(tau_L) via quantreg::anova.rq(fit,
+# joint=FALSE) (suggested by Tianying Wang). No bootstrap needed -- the
+# asymptotic covariance estimator is built for the stacked beta_hat(tau)
+# vector from the start. se="ker" (the default here) avoids both a
+# "computationally singular" crash with many covariates and some Type-I-
+# error inflation at low MAF that quantreg's own default se="nid" has (see
+# manuscript/heter_test_khmaladze/task25_wald_test_verification.R and the
+# se="ker" follow-up; credit Roulan Jiang for identifying the se argument).
+# ===========================================================================
+
+test_that("calculate_wald_heterogeneity returns Tn/pvalue for a single variant", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_wald_heterogeneity(G, Y)
+  expect_equal(nrow(result), 1)
+  expect_true(all(c("wald_Tn", "wald_ndf", "wald_ddf", "wald_pval") %in% colnames(result)))
+  expect_true(result$wald_pval >= 0 && result$wald_pval <= 1)
+})
+
+test_that("calculate_wald_heterogeneity p-value is read by row name G, robust to covariates", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Z <- matrix(rnorm(n * 3), ncol = 3)
+  Y <- matrix(0.6 * G[, 1] + 0.4 * Z[, 1] + rnorm(n, 0, 1 + 0.5 * G[, 1]), ncol = 1)
+  result <- calculate_wald_heterogeneity(G, Y, Z)
+  expect_equal(nrow(result), 1)
+  expect_false(is.na(result$wald_pval))
+  # true heterogeneity in G -> expect a small p-value, not just "not NA"
+  expect_true(result$wald_pval < 0.05)
+})
+
+test_that("calculate_wald_heterogeneity handles multiple variants", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  set.seed(3)
+  G <- matrix(rbinom(n * 2, 2, 0.3), ncol = 2,
+              dimnames = list(NULL, c("chr1:100:A:G", "chr1:200:A:G")))
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_wald_heterogeneity(G, Y)
+  expect_equal(nrow(result), 2)
+  expect_equal(result$variant_id, colnames(G))
+})
+
+# ===========================================================================
+# calculate_subsampling_heterogeneity
+#
+# Recentered ("mimicking") subsampling test of Chernozhukov & Fernandez-Val
+# (2005, Sankhya), suggested by Roulan Jiang as a density/sparsity-estimation-
+# free alternative to KhmaladzeTest/anova.rq (no se="nid"/se="ker" choice).
+# See manuscript/heter_test_khmaladze/task27_subsampling_verification.R for
+# the Type-I-error/power simulation.
+# ===========================================================================
+
+test_that("calculate_subsampling_heterogeneity returns Sn/pvalue for a single variant", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_subsampling_heterogeneity(G, Y, n_boot = 49)
+  expect_equal(nrow(result), 1)
+  expect_true(all(c("subsamp_Sn", "subsamp_b", "subsamp_pval") %in% colnames(result)))
+  expect_true(result$subsamp_pval >= 0 && result$subsamp_pval <= 1)
+})
+
+test_that("calculate_subsampling_heterogeneity detects true heterogeneity with covariates", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  G <- make_het_geno(n)
+  Z <- matrix(rnorm(n * 3), ncol = 3)
+  Y <- matrix(0.6 * G[, 1] + 0.4 * Z[, 1] + rnorm(n, 0, 1 + 0.5 * G[, 1]), ncol = 1)
+  result <- calculate_subsampling_heterogeneity(G, Y, Z, n_boot = 49)
+  expect_false(is.na(result$subsamp_pval))
+  expect_true(result$subsamp_pval < 0.05)
+})
+
+test_that("calculate_subsampling_heterogeneity handles multiple variants and the ks statistic", {
+  skip_if_not_installed("quantreg")
+  n <- 300
+  set.seed(3)
+  G <- matrix(rbinom(n * 2, 2, 0.3), ncol = 2,
+              dimnames = list(NULL, c("chr1:100:A:G", "chr1:200:A:G")))
+  Y <- matrix(0.6 * G[, 1] + rnorm(n), ncol = 1)
+  result <- calculate_subsampling_heterogeneity(G, Y, n_boot = 49, statistic = "ks")
+  expect_equal(nrow(result), 2)
+  expect_equal(result$variant_id, colnames(G))
+})
+
+# ===========================================================================
 # qr_screen
 # ===========================================================================
 

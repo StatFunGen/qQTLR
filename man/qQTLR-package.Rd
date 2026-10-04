@@ -12,6 +12,7 @@ quantile TWAS weight training, and quantile TWAS pipelines.
 \seealso{
 Useful links:
 \itemize{
+  \item \url{https://statfungen.github.io/qQTLR}
   \item \url{https://github.com/StatFunGen/qQTLR}
   \item Report bugs at \url{https://github.com/StatFunGen/qQTLR/issues}
 }
